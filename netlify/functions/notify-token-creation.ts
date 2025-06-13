@@ -19,7 +19,7 @@ function createTelegramPhotoMessage(payload: any, TELEGRAM_CHAT_ID: string, TELE
   const name = payload.token?.name || '';
   const symbol = payload.token?.ticker || '';
   const pool = payload.pool || '';
-  const poolUrl = `https://v2.meteora.ag/damm/${pool}`;
+  const poolUrl = `https://app.meteora.ag/pools/${pool}`;
 
    // Construct HTML caption
    const tknzLink = `<a href="${poolUrl}">View on Meteora</a>`;
