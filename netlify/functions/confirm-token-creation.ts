@@ -101,6 +101,12 @@ export const handler: Handler = async (event) => {
     pipeline.hset(hashKey, flat);
     // Sorted set for launch time ordering
     pipeline.zadd('leaderboard:v2', { score: timestamp, member: mint });
+    // Persist poolConfigKey for later Explore filtering (keep top 500)
+    if (payload.poolConfigKey) {
+      pipeline.hset(hashKey, { poolConfigKey: String(payload.poolConfigKey) });
+      pipeline.zadd('poolConfigKeys', { score: timestamp, member: String(payload.poolConfigKey) });
+      pipeline.zremrangebyrank('poolConfigKeys', 0, -501);
+    }
     await pipeline.exec();
   } catch (err) {
     console.error('Error writing to Redis:', err);
@@ -109,6 +115,6 @@ export const handler: Handler = async (event) => {
   return {
     statusCode: 200,
     headers,
-    body: JSON.stringify({ success: true, createdAt: timestamp }),
+    body: JSON.stringify({ success: true, createdAt: timestamp, ...payload }),
   };
 };
