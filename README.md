@@ -194,6 +194,31 @@ Status: `200 OK`
 > }
 > ```
 
+### Marketplace Endpoint
+
+`GET /.netlify/functions/marketplace?req=<JSON encoded query>`
+
+Fetches the v2 token listing for one or more tabs.  The `req` query parameter should be a JSON-encoded object specifying which tabs to load and optional filters.
+
+**Request (GET)**
+```
+GET /.netlify/functions/marketplace?req={%22recent%22:{%22partnerConfigs%22:[%22pump.fun%22]},%22graduated%22:{}}
+```
+
+**Response (200 OK)**
+```json
+{
+  "recent":         { "pools": [ /* TokenEntry objects */ ] },
+  "aboutToGraduate": { "pools": [ /* TokenEntry objects */ ] },
+  "graduated":      { "pools": [ /* TokenEntry objects */ ] }
+}
+```
+
+Without `req`, it returns a flat list:
+```json
+{ "entries": [ /* TokenEntry objects */ ] }
+```
+
 ## Token Creation Flow
 
 ```mermaid
