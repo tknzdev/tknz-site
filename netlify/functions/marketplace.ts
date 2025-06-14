@@ -20,12 +20,11 @@ export const handler: Handler = async (event) => {
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Content-Type': 'application/json',
   };
-  // Handle CORS preflight
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 204, headers };
   }
   if (event.httpMethod !== 'GET') {
-    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
+    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed; use GET' }) };
   }
   try {
     // Fetch all v2 tokens sorted by launch time (desc)
@@ -72,11 +71,31 @@ export const handler: Handler = async (event) => {
       if (b.launchTime !== a.launchTime) return b.launchTime - a.launchTime;
       return (b.depositLamports || 0) - (a.depositLamports || 0);
     });
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({ entries }),
-    };
+    // Parse optional 'req' parameter for grouping and filters
+    const reqParam = event.queryStringParameters?.req;
+    if (reqParam) {
+      let reqBody: any;
+      try {
+        reqBody = JSON.parse(reqParam);
+      } catch {
+        return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid req param JSON' }) };
+      }
+      const result: Record<string, { pools: typeof entries }> = {};
+      for (const key of ['recent', 'aboutToGraduate', 'graduated'] as const) {
+        if (reqBody[key]) {
+          let pools = entries;
+          // Apply partnerConfigs filter if provided
+          const partnerConfigs = reqBody[key].partnerConfigs;
+          if (Array.isArray(partnerConfigs) && partnerConfigs.length > 0) {
+            pools = pools.filter((e) => partnerConfigs.includes(e.launchpad));
+          }
+          result[key] = { pools };
+        }
+      }
+      return { statusCode: 200, headers, body: JSON.stringify(result) };
+    }
+    // Default: return flat entries list
+    return { statusCode: 200, headers, body: JSON.stringify({ entries }) };
   } catch (err: any) {
     console.error('Error in marketplace endpoint:', err);
     return { statusCode: 500, headers, body: JSON.stringify({ error: 'Internal Server Error' }) };
