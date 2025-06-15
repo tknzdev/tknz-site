@@ -229,9 +229,10 @@ export const handler: Handler = async (event) => {
   console.log('Generated DBC config keypair with address:', configPubkey.toBase58());
   // Persist config keypair secret for later signing via sign-token-txs
   const configRedisKey = `signer:${walletAddress}:${configPubkey.toBase58()}:config`;
+  // Persist config keypair private key (base64) for later signing via sign-token-txs
   await redis.set(
     configRedisKey,
-    JSON.stringify(Array.from(configKeypair.secretKey))
+    Buffer.from(configKeypair.secretKey).toString('base64')
   );
   
     // Prepare Solana connection and keys
@@ -254,9 +255,10 @@ export const handler: Handler = async (event) => {
     const mintPubkey = mintKeypair.publicKey;
     // Persist mint keypair secret for later signing via sign-token-txs
     const mintRedisKey = `signer:${walletAddress}:${mintPubkey.toBase58()}:mint`;
+    // Persist mint keypair private key (base64) for later signing via sign-token-txs
     await redis.set(
       mintRedisKey,
-      JSON.stringify(Array.from(mintKeypair.secretKey))
+      Buffer.from(mintKeypair.secretKey).toString('base64')
     );
     // Derive user's ATA for new mint
     const ata = getAssociatedTokenAddressSync(mintPubkey, userPubkey, true, TOKEN_PROGRAM_ID);
