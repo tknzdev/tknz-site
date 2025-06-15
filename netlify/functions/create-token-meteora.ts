@@ -1,6 +1,16 @@
 import { Handler } from '@netlify/functions';
 import BN from 'bn.js';
-import { Connection, Keypair, PublicKey, SystemProgram, TransactionInstruction, VersionedTransaction, TransactionMessage, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  TransactionInstruction,
+  Transaction,
+  VersionedTransaction,
+  TransactionMessage,
+  LAMPORTS_PER_SOL,
+} from '@solana/web3.js';
 import {
   TOKEN_PROGRAM_ID,
   MINT_SIZE,
@@ -470,8 +480,10 @@ export const handler: Handler = async (event) => {
       //await redis.zremrangebyrank('poolConfigKeys', 0, -501);
       // Serialize transactions: mint (if SPL), config creation, and pool initialization
       const serializedTxs: string[] = [];
-      // Build raw unsigned VersionedTransaction for client to sign
-      const buildRaw = async (instructions: TransactionInstruction[]) => {
+      const buildAndSign = async (
+        instructions: TransactionInstruction[],
+        signers: Keypair[]
+      ) => {
         const { blockhash } = await connection.getLatestBlockhash();
         const message = new TransactionMessage({
           payerKey: userPubkey,
@@ -479,22 +491,20 @@ export const handler: Handler = async (event) => {
           instructions,
         }).compileToV0Message();
         const vtx = new VersionedTransaction(message);
+        try { vtx.sign(signers); } catch {}
         return Buffer.from(vtx.serialize()).toString('base64');
       };
       // For SPL pools: include minting transaction
       if (mergedCurveConfig.tokenType === 0) {
-        console.log(
-          `Building SPL mint transaction: instructions=${instructionsMint.length}`
-        );
-        serializedTxs.push(await buildRaw(instructionsMint));
+        console.log('Creating SPL mint transaction');
+        serializedTxs.push(await buildAndSign(instructionsMint, [mintKeypair]));
       } else {
         console.log('Skipping mint transaction for Token-2022');
       }
+
       // Config creation transaction (signed by config key)
-      console.log(
-        `Building config transaction: instructions=${createConfigTx.instructions.length}`
-      );
-      serializedTxs.push(await buildRaw(createConfigTx.instructions));
+      console.log('Creating config transaction');
+      serializedTxs.push(await buildAndSign(createConfigTx.instructions, [configKeypair]));
       // Pool initialization transaction (signed by baseMint and poolCreator if we have the keys)
       const poolCreatorPubkey = TREASURY_PUBKEY ?? userPubkey;
       const poolSigners: Keypair[] = [mintKeypair];
@@ -502,10 +512,8 @@ export const handler: Handler = async (event) => {
         poolSigners.push(TREASURY_KEYPAIR);
       }
       
-      console.log(
-        `Building pool transaction: instructions=${createPoolTx.instructions.length}`
-      );
-      serializedTxs.push(await buildRaw(createPoolTx.instructions));
+      console.log('Creating pool transaction with signers:', poolSigners.map(k => k.publicKey.toBase58()));
+      serializedTxs.push(await buildAndSign(createPoolTx.instructions, poolSigners));
 
       console.log(`Total transactions created: ${serializedTxs.length}`);
 
