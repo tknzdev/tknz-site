@@ -15,7 +15,7 @@ dotenv.config();
  *   - Environment vars RPC_ENDPOINT and CP_AMM_STATIC_CONFIG set for Netlify Dev
  */
 import axios from 'axios';
-import { Keypair, VersionedTransaction, Connection, PublicKey, LAMPORTS_PER_SOL, SendTransactionError, SystemProgram, Transaction } from '@solana/web3.js';
+import { Keypair, VersionedTransaction, Connection, PublicKey } from '@solana/web3.js';
 import { Buffer } from 'buffer';
 // Setup debug output to file and override exit to capture all data
 const __filename = fileURLToPath(import.meta.url);
@@ -24,6 +24,16 @@ const debugPath = path.resolve(__dirname, '../logs/create-token-debug.json');
 const debug: any = { startedAt: new Date().toISOString() };
 const origExit = process.exit.bind(process);
 (process as any).exit = (code?: any) => { fs.writeFileSync(debugPath, JSON.stringify(debug, null, 2)); origExit(code); };
+
+/**
+ * Utility to log signature slots by matching message staticAccountKeys
+ */
+function logSignatureSlots(tx: VersionedTransaction, label: string) {
+  const reqSigs = tx.message.header.numRequiredSignatures;
+  const signerKeys = tx.message.staticAccountKeys.slice(0, reqSigs).map(k => k.toBase58());
+  const slots = tx.signatures.map(sig => !sig.every(b => b === 0));
+  console.log(label, signerKeys.map((pk, i) => ({ pubkey: pk, present: slots[i] })));
+}
 
 async function main() {
   // Configuration from environment
@@ -96,12 +106,18 @@ async function main() {
   try {
     const resp = await axios.post(FUNCTION_URL, payload, { headers: { 'Content-Type': 'application/json' } });
     if (resp.status !== 200) {
+      console.error('HTTP error status:', resp.status, 'body:', resp.data);
       throw new Error(`HTTP error ${resp.status}`);
     }
     data = resp.data;
     debug.functionResponse = { status: resp.status, data };
   } catch (httpErr: any) {
-    console.error('HTTP call failed, falling back to direct handler invocation:', httpErr.message || httpErr);
+    console.error(
+      'HTTP call failed:',
+      httpErr.response?.status,
+      httpErr.response?.data,
+      httpErr.message || httpErr
+    );
     process.exit(1);
   }
   
@@ -121,74 +137,59 @@ async function main() {
     return tx;
   });
 
-  // Sign all transactions with wallet so downstream consumers can broadcast
-  for (let i = 0; i < txs.length; i++) {
-    const tx = txs[i];
-    // Check if there are existing signatures and preserve them
-    const existingSigs = tx.signatures.length;
-    console.log(`Transaction ${i} has ${existingSigs} existing signatures`);
-    
-    // Add wallet signature without overwriting existing ones
-    tx.addSignature(wallet.publicKey, nacl.sign.detached(tx.message.serialize(), wallet.secretKey));
-    console.log(`Added wallet signature to tx ${i}`);
-  }
+  // 1) Client-side signing of raw transactions
+  const clientSignedB64s = txs.map((tx, idx) => {
+    const sig = nacl.sign.detached(tx.message.serialize(), wallet.secretKey);
+    tx.addSignature(wallet.publicKey, sig);
+    logSignatureSlots(tx, `Client-signed tx ${idx}`);
+    return Buffer.from(tx.serialize()).toString('base64');
+  });
 
-  // When an RPC endpoint is supplied we *optionally* simulate + submit the
-  // transactions to a cluster.  This step is skipped by default because CI
-  // environments usually do not have a validator running.
+  // 2) Server-side counter-signing via sign-token-txs endpoint
+  const SIGN_URL = process.env.SIGN_TOKEN_URL || FUNCTION_URL.replace('create-token-meteora', 'sign-token-txs');
+  console.log('POST to sign-token-txs:', SIGN_URL, {
+    walletAddress: wallet.publicKey.toBase58(), poolConfigKey: data.poolConfigKey, mint: data.mint
+  });
+  const signResp = await axios.post(SIGN_URL, {
+    walletAddress: wallet.publicKey.toBase58(),
+    poolConfigKey: data.poolConfigKey,
+    mint: data.mint,
+    signedConfigTx: clientSignedB64s[0],
+    signedPoolTx: clientSignedB64s[1],
+  }, { headers: { 'Content-Type': 'application/json' } });
+  console.log('sign-token-txs response:', signResp.status, signResp.data);
+  const { signedConfigTx, signedPoolTx } = signResp.data;
+  // 3) Decode and display signatures after server signing
+  // 3) Decode and display signatures after server signing
+  [signedConfigTx, signedPoolTx].forEach((b64, idx) => {
+    const tx = VersionedTransaction.deserialize(Buffer.from(b64, 'base64'));
+    logSignatureSlots(tx, `Server-signed tx ${idx}`);
+  });
 
-  let connection: Connection | undefined;
-
+  // 4) Broadcast fully-signed transactions to chain
   if (RPC_ENDPOINT) {
-    connection = new Connection(RPC_ENDPOINT, 'confirmed');
-
-    // Simulate -------------------------------------------------------------------
-    debug.simulations = [];
-    console.log('Simulating transactions (warnings only)...');
-    for (let i = 0; i < txs.length; i++) {
-      const tx = txs[i];
+    const conn = new Connection(RPC_ENDPOINT, 'confirmed');
+    for (let i = 0; i < 2; i++) {
+      const raw = Buffer.from([signedConfigTx, signedPoolTx][i], 'base64');
+      console.log(`Sending fully-signed tx ${i}...`);
+      const tx = VersionedTransaction.deserialize(raw);
+      let sig;
       try {
-        const sim = await connection!.simulateTransaction(tx);
-        debug.simulations.push({ index: i, result: sim.value });
-        if (sim.value.err) {
-          console.warn(`Simulation warning for tx ${i}:`, sim.value.err);
-          if (Array.isArray(sim.value.logs)) sim.value.logs.forEach(l => console.warn(l));
-        } else {
-          console.log(`Simulation passed for tx ${i}`);
-        }
-      } catch (simErr: any) {
-        console.warn(`Simulation exception for tx ${i}:`, simErr.message || simErr);
-        debug.simulations.push({ index: i, error: simErr.message || simErr });
-      }
-    }
-
-    // Submit ---------------------------------------------------------------------
-    console.log('Submitting transactions...');
-    debug.submissions = [];
-    for (let i = 0; i < txs.length; i++) {
-      const raw = txs[i].serialize();
-      let sig: string;
-      try {
-        sig = await connection!.sendRawTransaction(raw, { skipPreflight: true });
-        console.log(`Submitted tx ${i}, signature:`, sig);
+        sig = await conn.sendRawTransaction(raw, { skipPreflight: true });
+        console.log(`Submitted final tx ${i} sig:`, sig);
       } catch (err: any) {
-        console.error(`Transaction ${i} submission failed:`, err);
+        console.error(`Error submitting final tx ${i}:`, err);
         process.exit(1);
       }
-      try {
-        const conf = await connection!.confirmTransaction(sig, 'confirmed');
-        console.log(`Transaction ${i} confirmed:`, sig);
-        if (conf.value.err) {
-          console.error(`Transaction ${i} on-chain error:`, conf.value.err);
-          process.exit(1);
-        }
-      } catch (err: any) {
-        console.error(`Transaction ${i} confirmation failed:`, err);
+      const conf = await conn.confirmTransaction(sig, 'confirmed');
+      if (conf.value.err) {
+        console.error(`Final tx ${i} on-chain error:`, conf.value.err);
         process.exit(1);
       }
+      console.log(`Final tx ${i} finalized on-chain.`);
     }
   } else {
-    console.log('RPC endpoint not supplied – skipping simulation & submission');
+    console.warn('RPC_ENDPOINT not provided; skipping on-chain send');
   }
 
   // No manual swap: backend already includes swap Tx when buyAmount>0.
