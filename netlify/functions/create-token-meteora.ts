@@ -228,9 +228,9 @@ export const handler: Handler = async (event) => {
   const configPubkey = configKeypair.publicKey;
   console.log('Generated DBC config keypair with address:', configPubkey.toBase58());
   // Persist config keypair secret for later signing via sign-token-txs
-  await redis.hset(
-    'signer:config',
-    configPubkey.toBase58(),
+  const configRedisKey = `signer:${walletAddress}:${configIndex}:config`;
+  await redis.set(
+    configRedisKey,
     JSON.stringify(Array.from(configKeypair.secretKey))
   );
   
@@ -253,9 +253,9 @@ export const handler: Handler = async (event) => {
     const mintKeypair = Keypair.generate();
     const mintPubkey = mintKeypair.publicKey;
     // Persist mint keypair secret for later signing via sign-token-txs
-    await redis.hset(
-      'signer:mint',
-      mintPubkey.toBase58(),
+    const mintRedisKey = `signer:${walletAddress}:${mintPubkey.toBase58()}:mint`;
+    await redis.set(
+      mintRedisKey,
       JSON.stringify(Array.from(mintKeypair.secretKey))
     );
     // Derive user's ATA for new mint
