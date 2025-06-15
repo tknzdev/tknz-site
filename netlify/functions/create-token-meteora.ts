@@ -446,12 +446,14 @@ export const handler: Handler = async (event) => {
         mint: mintPubkey.toBase58(),
         poolConfigKey,
       });
+      
       // Sorted set of recent config keys (keep top 500)
-      await redis.zadd('poolConfigKeys', {
-        score: Date.now(),
-        member: poolConfigKey,
-      });
-      await redis.zremrangebyrank('poolConfigKeys', 0, -501);
+      //await redis.zadd('poolConfigKeys', {
+      //  score: Date.now(),
+      //  member: poolConfigKey,
+      //});
+//
+      //await redis.zremrangebyrank('poolConfigKeys', 0, -501);
       // Serialize transactions: mint (if SPL), config creation, and pool initialization
       const serializedTxs: string[] = [];
       const buildAndSign = async (
@@ -500,6 +502,7 @@ export const handler: Handler = async (event) => {
           metadataUri: tokenMetadata.uri,
           tokenMetadata,
           pool: poolAddress.toBase58(),
+          poolConfigKey,
           decimals,
           initialSupply,
           initialSupplyRaw: initialSupplyRaw.toString(),
