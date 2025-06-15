@@ -34,13 +34,14 @@ export const handler: Handler = async (event) => {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing required fields' }) };
   }
   // Retrieve stored keypair secrets by wallet-scoped Redis keys
-  const cfgSecretJson = await redis.get(`signer:${walletAddress}:${poolConfigKey}:config`);
-  const mintSecretJson = await redis.get(`signer:${walletAddress}:${mint}:mint`);
-  if (!cfgSecretJson || !mintSecretJson) {
+  // Retrieve base64-encoded private keys from Redis and rebuild keypairs
+  const cfgSecretB64 = await redis.get(`signer:${walletAddress}:${poolConfigKey}:config`);
+  const mintSecretB64 = await redis.get(`signer:${walletAddress}:${mint}:mint`);
+  if (!cfgSecretB64 || !mintSecretB64) {
     return { statusCode: 404, headers, body: JSON.stringify({ error: 'Keypair not found' }) };
   }
-  const cfgSecret = Uint8Array.from(JSON.parse(cfgSecretJson));
-  const mintSecret = Uint8Array.from(JSON.parse(mintSecretJson));
+  const cfgSecret = Uint8Array.from(Buffer.from(cfgSecretB64, 'base64'));
+  const mintSecret = Uint8Array.from(Buffer.from(mintSecretB64, 'base64'));
   const configKP = Keypair.fromSecretKey(cfgSecret);
   const mintKP = Keypair.fromSecretKey(mintSecret);
   // Deserialize client-signed transactions
