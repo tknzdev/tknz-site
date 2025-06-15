@@ -483,13 +483,17 @@ export const handler: Handler = async (event) => {
       };
       // For SPL pools: include minting transaction
       if (mergedCurveConfig.tokenType === 0) {
-        console.log('Building SPL mint transaction (unsigned)');
+        console.log(
+          `Building SPL mint transaction: instructions=${instructionsMint.length}`
+        );
         serializedTxs.push(await buildRaw(instructionsMint));
       } else {
         console.log('Skipping mint transaction for Token-2022');
       }
       // Config creation transaction (signed by config key)
-      console.log('Building config transaction (unsigned)');
+      console.log(
+        `Building config transaction: instructions=${createConfigTx.instructions.length}`
+      );
       serializedTxs.push(await buildRaw(createConfigTx.instructions));
       // Pool initialization transaction (signed by baseMint and poolCreator if we have the keys)
       const poolCreatorPubkey = TREASURY_PUBKEY ?? userPubkey;
@@ -498,7 +502,9 @@ export const handler: Handler = async (event) => {
         poolSigners.push(TREASURY_KEYPAIR);
       }
       
-      console.log('Building pool transaction (unsigned)');
+      console.log(
+        `Building pool transaction: instructions=${createPoolTx.instructions.length}`
+      );
       serializedTxs.push(await buildRaw(createPoolTx.instructions));
 
       console.log(`Total transactions created: ${serializedTxs.length}`);
