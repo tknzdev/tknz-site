@@ -29,13 +29,13 @@ export const handler: Handler = async (event) => {
   } catch {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid JSON body' }) };
   }
-  const { poolConfigKey, mint, signedConfigTx, signedPoolTx } = payload;
-  if (!poolConfigKey || !mint || !signedConfigTx || !signedPoolTx) {
+  const { poolConfigKey, mint, signedConfigTx, signedPoolTx, walletAddress } = payload;
+  if (!walletAddress || !poolConfigKey || !mint || !signedConfigTx || !signedPoolTx) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing required fields' }) };
   }
-  // Retrieve stored keypair secrets
-  const cfgSecretJson = await redis.hget('signer:config', poolConfigKey);
-  const mintSecretJson = await redis.hget('signer:mint', mint);
+  // Retrieve stored keypair secrets by wallet-scoped Redis keys
+  const cfgSecretJson = await redis.get(`signer:${walletAddress}:${poolConfigKey}:config`);
+  const mintSecretJson = await redis.get(`signer:${walletAddress}:${mint}:mint`);
   if (!cfgSecretJson || !mintSecretJson) {
     return { statusCode: 404, headers, body: JSON.stringify({ error: 'Keypair not found' }) };
   }
