@@ -227,6 +227,12 @@ export const handler: Handler = async (event) => {
   const configKeypair = Keypair.generate();
   const configPubkey = configKeypair.publicKey;
   console.log('Generated DBC config keypair with address:', configPubkey.toBase58());
+  // Persist config keypair secret for later signing via sign-token-txs
+  await redis.hset(
+    'signer:config',
+    configPubkey.toBase58(),
+    JSON.stringify(Array.from(configKeypair.secretKey))
+  );
   
     // Prepare Solana connection and keys
     // Allow overriding via RPC_ENDPOINT or SOLANA_RPC_URL env vars (RPC_ENDPOINT takes precedence for local testing)
@@ -246,6 +252,12 @@ export const handler: Handler = async (event) => {
     // Generate new mint keypair
     const mintKeypair = Keypair.generate();
     const mintPubkey = mintKeypair.publicKey;
+    // Persist mint keypair secret for later signing via sign-token-txs
+    await redis.hset(
+      'signer:mint',
+      mintPubkey.toBase58(),
+      JSON.stringify(Array.from(mintKeypair.secretKey))
+    );
     // Derive user's ATA for new mint
     const ata = getAssociatedTokenAddressSync(mintPubkey, userPubkey, true, TOKEN_PROGRAM_ID);
     // Compute rent exemption for mint
@@ -456,10 +468,8 @@ export const handler: Handler = async (event) => {
       //await redis.zremrangebyrank('poolConfigKeys', 0, -501);
       // Serialize transactions: mint (if SPL), config creation, and pool initialization
       const serializedTxs: string[] = [];
-      const buildAndSign = async (
-        instructions: TransactionInstruction[],
-        signers: Keypair[]
-      ) => {
+      // Build raw unsigned VersionedTransaction for client to sign
+      const buildRaw = async (instructions: TransactionInstruction[]) => {
         const { blockhash } = await connection.getLatestBlockhash();
         const message = new TransactionMessage({
           payerKey: userPubkey,
@@ -467,19 +477,18 @@ export const handler: Handler = async (event) => {
           instructions,
         }).compileToV0Message();
         const vtx = new VersionedTransaction(message);
-        try { vtx.sign(signers); } catch {}
         return Buffer.from(vtx.serialize()).toString('base64');
       };
       // For SPL pools: include minting transaction
       if (mergedCurveConfig.tokenType === 0) {
-        console.log('Creating SPL mint transaction');
-        serializedTxs.push(await buildAndSign(instructionsMint, [mintKeypair]));
+        console.log('Building SPL mint transaction (unsigned)');
+        serializedTxs.push(await buildRaw(instructionsMint));
       } else {
         console.log('Skipping mint transaction for Token-2022');
       }
       // Config creation transaction (signed by config key)
-      console.log('Creating config transaction');
-      serializedTxs.push(await buildAndSign(createConfigTx.instructions, [configKeypair]));
+      console.log('Building config transaction (unsigned)');
+      serializedTxs.push(await buildRaw(createConfigTx.instructions));
       // Pool initialization transaction (signed by baseMint and poolCreator if we have the keys)
       const poolCreatorPubkey = TREASURY_PUBKEY ?? userPubkey;
       const poolSigners: Keypair[] = [mintKeypair];
@@ -487,8 +496,8 @@ export const handler: Handler = async (event) => {
         poolSigners.push(TREASURY_KEYPAIR);
       }
       
-      console.log('Creating pool transaction with signers:', poolSigners.map(k => k.publicKey.toBase58()));
-      serializedTxs.push(await buildAndSign(createPoolTx.instructions, poolSigners));
+      console.log('Building pool transaction (unsigned)');
+      serializedTxs.push(await buildRaw(createPoolTx.instructions));
 
       console.log(`Total transactions created: ${serializedTxs.length}`);
 
