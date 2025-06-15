@@ -35,6 +35,29 @@ function logSignatureSlots(tx: VersionedTransaction, label: string) {
   console.log(label, signerKeys.map((pk, i) => ({ pubkey: pk, present: slots[i] })));
 }
 
+/**
+ * Emulate wallet signing behavior (like Phantom)
+ * Standard wallets use the built-in signing methods from Solana Web3.js
+ */
+function walletSignTransaction(tx: VersionedTransaction, wallet: Keypair): VersionedTransaction {
+  // Clone the transaction to avoid mutating the original
+  const signedTx = VersionedTransaction.deserialize(tx.serialize());
+  
+  // Use the standard Solana Web3.js signing method
+  // This is how wallets typically sign transactions internally
+  signedTx.sign([wallet]);
+  
+  return signedTx;
+}
+
+/**
+ * Emulate wallet's signAllTransactions method
+ * This mimics how wallets like Phantom sign multiple transactions at once
+ */
+function walletSignAllTransactions(txs: VersionedTransaction[], wallet: Keypair): VersionedTransaction[] {
+  return txs.map(tx => walletSignTransaction(tx, wallet));
+}
+
 async function main() {
   // Configuration from environment
   const FUNCTION_URL_ENV = process.env.CREATE_TOKEN_URL || process.env.FUNCTION_URL;
@@ -137,11 +160,15 @@ async function main() {
     return tx;
   });
 
-  // 1) Client-side signing of raw transactions
-  const clientSignedB64s = txs.map((tx, idx) => {
-    const sig = nacl.sign.detached(tx.message.serialize(), wallet.secretKey);
-    tx.addSignature(wallet.publicKey, sig);
-    logSignatureSlots(tx, `Client-signed tx ${idx}`);
+  // 1) Client-side signing - Emulate standard wallet behavior
+  console.log('Emulating wallet signing (like Phantom)...');
+  
+  // Use the wallet signing emulation functions
+  const signedTxs = walletSignAllTransactions(txs, wallet);
+  
+  // Convert signed transactions to base64 strings
+  const clientSignedB64s = signedTxs.map((tx, idx) => {
+    logSignatureSlots(tx, `Client-signed tx ${idx} (wallet emulation)`);
     return Buffer.from(tx.serialize()).toString('base64');
   });
 
@@ -167,21 +194,22 @@ async function main() {
   });
 
   // 4) Broadcast fully-signed transactions to chain
+  let connection: Connection | undefined;
   if (RPC_ENDPOINT) {
-    const conn = new Connection(RPC_ENDPOINT, 'confirmed');
+    connection = new Connection(RPC_ENDPOINT, 'confirmed');
     for (let i = 0; i < 2; i++) {
       const raw = Buffer.from([signedConfigTx, signedPoolTx][i], 'base64');
       console.log(`Sending fully-signed tx ${i}...`);
       const tx = VersionedTransaction.deserialize(raw);
       let sig;
       try {
-        sig = await conn.sendRawTransaction(raw, { skipPreflight: true });
+        sig = await connection.sendRawTransaction(raw, { skipPreflight: true });
         console.log(`Submitted final tx ${i} sig:`, sig);
       } catch (err: any) {
         console.error(`Error submitting final tx ${i}:`, err);
         process.exit(1);
       }
-      const conf = await conn.confirmTransaction(sig, 'confirmed');
+      const conf = await connection.confirmTransaction(sig, 'confirmed');
       if (conf.value.err) {
         console.error(`Final tx ${i} on-chain error:`, conf.value.err);
         process.exit(1);
