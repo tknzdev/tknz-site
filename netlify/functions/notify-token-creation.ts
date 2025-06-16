@@ -19,10 +19,10 @@ function createTelegramPhotoMessage(payload: any, TELEGRAM_CHAT_ID: string, TELE
   const name = payload.token?.name || '';
   const symbol = payload.token?.ticker || '';
   const pool = payload.pool || '';
-  const poolUrl = `https://app.meteora.ag/pools/${pool}`;
+  const poolUrl = `https://solscan.io/account/${pool}`;
 
    // Construct HTML caption
-   const tknzLink = `<a href="${poolUrl}">View on Meteora</a>`;
+   const tknzLink = `<a href="${poolUrl}">View on Solscan</a>`;
    const xLink = payload.token?.twitter ? `<a href="${xUrl}">View on X</a>` : '';
    const date = new Date(Number(payload.createdAt));
    const formattedLaunchTime = format(date, 'MMM d, yyyy h:mm a');
