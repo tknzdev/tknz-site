@@ -13,6 +13,7 @@
     "test": "node --loader ts-node/esm --test tests/create-token-meteora.endpoint.test.ts",
     "test:notify": "ts-node-esm scripts/test-send-notification.ts",
     "test:create-token": "ts-node-esm scripts/test-create-token.ts",
+    "compare-transactions": "ts-node-esm scripts/compare-transactions.ts",
     "test:confirm-token": "ts-node-esm scripts/confirm-token-creation.ts"
   },
   "dependencies": {
