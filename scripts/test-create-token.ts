@@ -20,7 +20,11 @@ import { Buffer } from 'buffer';
 // Setup debug output to file and override exit to capture all data
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const debugPath = path.resolve(__dirname, '../logs/create-token-debug.json');
+const logsDir = path.resolve(__dirname, '../logs');
+if (!fs.existsSync(logsDir)) {
+  fs.mkdirSync(logsDir, { recursive: true });
+}
+const debugPath = path.resolve(logsDir, 'create-token-debug.json');
 const debug: any = { startedAt: new Date().toISOString() };
 const origExit = process.exit.bind(process);
 (process as any).exit = (code?: any) => { fs.writeFileSync(debugPath, JSON.stringify(debug, null, 2)); origExit(code); };
@@ -193,6 +197,74 @@ async function main() {
     logSignatureSlots(tx, `Server-signed tx ${idx}`);
   });
 
+  // Capture detailed transaction analysis for comparison
+  debug.transactionAnalysis = {
+    transactions: txs.map((tx, idx) => ({
+      index: idx,
+      version: tx.message.version,
+      header: {
+        numRequiredSignatures: tx.message.header.numRequiredSignatures,
+        numReadonlySignedAccounts: tx.message.header.numReadonlySignedAccounts,
+        numReadonlyUnsignedAccounts: tx.message.header.numReadonlyUnsignedAccounts,
+      },
+      recentBlockhash: tx.message.recentBlockhash,
+      staticAccountKeys: tx.message.staticAccountKeys.map(k => k.toBase58()),
+      compiledInstructions: tx.message.compiledInstructions.map(inst => ({
+        programIdIndex: inst.programIdIndex,
+        accountKeyIndexes: inst.accountKeyIndexes,
+        dataLength: inst.data.length,
+        dataHex: Buffer.from(inst.data).toString('hex'),
+      })),
+      addressTableLookups: tx.message.addressTableLookups?.map(lookup => ({
+        accountKey: lookup.accountKey.toBase58(),
+        writableIndexes: lookup.writableIndexes,
+        readonlyIndexes: lookup.readonlyIndexes,
+      })) || [],
+      signatures: {
+        beforeClientSign: tx.signatures.map(sig => ({
+          present: !sig.every(b => b === 0),
+          hex: Buffer.from(sig).toString('hex'),
+        })),
+        afterClientSign: (() => {
+          const clientTx = VersionedTransaction.deserialize(Buffer.from(clientSignedB64s[idx], 'base64'));
+          return clientTx.signatures.map(sig => ({
+            present: !sig.every(b => b === 0),
+            hex: Buffer.from(sig).toString('hex'),
+          }));
+        })(),
+        afterServerSign: [signedConfigTx, signedPoolTx][idx] ? (() => {
+          const serverTx = VersionedTransaction.deserialize(Buffer.from([signedConfigTx, signedPoolTx][idx], 'base64'));
+          return serverTx.signatures.map(sig => ({
+            present: !sig.every(b => b === 0),
+            hex: Buffer.from(sig).toString('hex'),
+          }));
+        })() : null,
+      },
+      base64: {
+        original: data.transactions[idx],
+        afterClientSign: clientSignedB64s[idx],
+        afterServerSign: [signedConfigTx, signedPoolTx][idx] || null,
+      },
+    })),
+    requestPayload: payload,
+    responseData: {
+      mint: data.mint,
+      pool: data.pool,
+      poolConfigKey: data.poolConfigKey,
+      ata: data.ata,
+      metadataUri: data.metadataUri,
+    },
+    walletInfo: {
+      publicKey: wallet.publicKey.toBase58(),
+      secretKeyFirst5: Array.from(wallet.secretKey.slice(0, 5)),
+    },
+    environment: {
+      functionUrl: FUNCTION_URL,
+      signUrl: SIGN_URL,
+      rpcEndpoint: RPC_ENDPOINT || 'not provided',
+    },
+  };
+
   // 4) Broadcast fully-signed transactions to chain
   let connection: Connection | undefined;
   if (RPC_ENDPOINT) {
@@ -284,74 +356,7 @@ async function main() {
       console.error('Error calling notify-token-creation endpoint:', err.message || err);
     }
   }
-  // Capture detailed transaction analysis
-  debug.transactionAnalysis = {
-    transactions: txs.map((tx, idx) => ({
-      index: idx,
-      version: tx.message.version,
-      header: {
-        numRequiredSignatures: tx.message.header.numRequiredSignatures,
-        numReadonlySignedAccounts: tx.message.header.numReadonlySignedAccounts,
-        numReadonlyUnsignedAccounts: tx.message.header.numReadonlyUnsignedAccounts,
-      },
-      recentBlockhash: tx.message.recentBlockhash,
-      staticAccountKeys: tx.message.staticAccountKeys.map(k => k.toBase58()),
-      compiledInstructions: tx.message.compiledInstructions.map(inst => ({
-        programIdIndex: inst.programIdIndex,
-        accountKeyIndexes: inst.accountKeyIndexes,
-        dataLength: inst.data.length,
-        dataHex: Buffer.from(inst.data).toString('hex'),
-      })),
-      addressTableLookups: tx.message.addressTableLookups?.map(lookup => ({
-        accountKey: lookup.accountKey.toBase58(),
-        writableIndexes: lookup.writableIndexes,
-        readonlyIndexes: lookup.readonlyIndexes,
-      })) || [],
-      signatures: {
-        beforeClientSign: tx.signatures.map(sig => ({
-          present: !sig.every(b => b === 0),
-          hex: Buffer.from(sig).toString('hex'),
-        })),
-        afterClientSign: (() => {
-          const clientTx = VersionedTransaction.deserialize(Buffer.from(clientSignedB64s[idx], 'base64'));
-          return clientTx.signatures.map(sig => ({
-            present: !sig.every(b => b === 0),
-            hex: Buffer.from(sig).toString('hex'),
-          }));
-        })(),
-        afterServerSign: [signedConfigTx, signedPoolTx][idx] ? (() => {
-          const serverTx = VersionedTransaction.deserialize(Buffer.from([signedConfigTx, signedPoolTx][idx], 'base64'));
-          return serverTx.signatures.map(sig => ({
-            present: !sig.every(b => b === 0),
-            hex: Buffer.from(sig).toString('hex'),
-          }));
-        })() : null,
-      },
-      base64: {
-        original: data.transactions[idx],
-        afterClientSign: clientSignedB64s[idx],
-        afterServerSign: [signedConfigTx, signedPoolTx][idx] || null,
-      },
-    })),
-    requestPayload: payload,
-    responseData: {
-      mint: data.mint,
-      pool: data.pool,
-      poolConfigKey: data.poolConfigKey,
-      ata: data.ata,
-      metadataUri: data.metadataUri,
-    },
-    walletInfo: {
-      publicKey: wallet.publicKey.toBase58(),
-      secretKeyFirst5: Array.from(wallet.secretKey.slice(0, 5)),
-    },
-    environment: {
-      functionUrl: FUNCTION_URL,
-      signUrl: SIGN_URL,
-      rpcEndpoint: RPC_ENDPOINT || 'not provided',
-    },
-  };
-
+  
   // write collected debug information to file
   fs.writeFileSync(debugPath, JSON.stringify(debug, null, 2));
   console.log('Debug info written to', debugPath);
