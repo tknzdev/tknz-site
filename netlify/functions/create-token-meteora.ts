@@ -45,7 +45,7 @@ if (process.env.TREASURY_SECRET_KEY) {
 }
 // Default curve parameters and deposit settings
 const DEFAULT_INITIAL_PRICE = 0.00001; // SOL per token
-const DEFAULT_SOL_DEPOSIT = 0.01;      // SOL to deposit into pool (~$1 at 100 SOL/USD)
+const DEFAULT_SOL_DEPOSIT = 0;      // SOL to deposit into pool (~$1 at 100 SOL/USD)
 
 
 // Helper to upload token metadata (name, symbol, description, image, etc.) to IPFS via Pump Portal
@@ -126,7 +126,7 @@ interface CreateMeteoraTokenRequest {
      * instruction after pool initialization. If omitted or 0 the swap step is
      * skipped, fully preserving backwards-compatibility.
      */
-    buyAmount?: number;       // SOL amount to swap for the new token
+    //buyAmount?: number;       // SOL amount to swap for the new token
   };
 }
 
@@ -448,11 +448,11 @@ export const handler: Handler = async (event) => {
           symbol: token.ticker,
           uri: tokenMetadata.uri,
         },
-        swapBuyParam: {
-          buyAmount: buyLamportsBN,
-          minimumAmountOut: new BN(0),
-          referralTokenAccount: null,
-        },
+        //swapBuyParam: {
+        //  buyAmount: buyLamportsBN,
+        //  minimumAmountOut: new BN(0),
+        //  referralTokenAccount: null,
+        //},
       });
       
       // Derive DBC pool address and store mapping
