@@ -434,7 +434,7 @@ export const handler: Handler = async (event) => {
     // Create config and pool transactions
     console.log('Creating pool config, pool and swap transactions...');
     try {
-      const { createConfigTx, createPoolTx } = await dbcClient.pool.createConfigAndPoolWithFirstBuy({
+      const { createConfigTx, createPoolTx } = await dbcClient.pool.createConfigAndPool({
         config: configPubkey.toBase58(),
         feeClaimer: (TREASURY_PUBKEY ?? userPubkey).toBase58(),
         leftoverReceiver: userPubkey.toBase58(),
