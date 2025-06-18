@@ -14,6 +14,9 @@ import { DynamicBondingCurveClient, bpsToFeeNumerator, FeeSchedulerMode, getSqrt
 dotenv.config();
 
 async function main() {
+  // Enable DRY_RUN to skip on-chain submissions and redis writes (validation only)
+  const DRY_RUN = process.env.DRY_RUN === 'true';
+
   // Load treasury keypair from config file
   const treasuryPath = path.resolve(process.cwd(), 'config/keys/treasury.json');
   const treasurySecret = JSON.parse(fs.readFileSync(treasuryPath, 'utf-8'));
@@ -21,15 +24,17 @@ async function main() {
   const treasuryPubkey = TREASURY_KP.publicKey;
 
   console.log('TREASURY_KP', TREASURY_KP.publicKey.toBase58());
-  // Initialize Redis client
-  const redisUrl = process.env.UPSTASH_REDIS_REST_URL!;
-  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN!;
-  const redis = new Redis({ url: redisUrl, token: redisToken });
+  // Initialize Redis client (skipped in DRY_RUN)
+  const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const redis = DRY_RUN ? (null as unknown as Redis) : new Redis({ url: redisUrl!, token: redisToken! });
 
   // Initialize Solana connection and DBC client
   const RPC_ENDPOINT = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
   const connection = new Connection(RPC_ENDPOINT, 'confirmed');
   const dbcClient = new DynamicBondingCurveClient(connection, 'confirmed');
+
+  // We already defined DRY_RUN at the top of main()
 
   // Prepare batching arrays
   const allInstructions: TransactionInstruction[] = [];
@@ -49,6 +54,7 @@ async function main() {
   const multiplier = new BN(10).pow(new BN(decimals));
   const poolSupplyRaw = new BN(DEFAULT_POOL_SUPPLY).mul(multiplier);
   console.log('poolSupplyRaw', poolSupplyRaw.toString());
+
 
   // Preset bonding curve definitions
   const presets: { label: string; description: string; config: any }[] = [
@@ -82,7 +88,7 @@ async function main() {
         },
         poolFees: {
           baseFee: {
-            cliffFeeNumerator: bpsToFeeNumerator(1),
+            cliffFeeNumerator: bpsToFeeNumerator(100),
             numberOfPeriod: 0,
             periodFrequency: new BN(0),
             reductionFactor: new BN(0),
@@ -126,7 +132,7 @@ async function main() {
         },
         poolFees: {
           baseFee: {
-            cliffFeeNumerator: bpsToFeeNumerator(2),
+            cliffFeeNumerator: bpsToFeeNumerator(200),
             numberOfPeriod: 0,
             periodFrequency: new BN(0),
             reductionFactor: new BN(0),
@@ -141,8 +147,8 @@ async function main() {
       },
     },
     {
-      label: 'Slow Ramp — low fee, low start, grow over time',
-      description: 'A no-fee, low-start bonding curve for long-term growth. Perfect for creators who want users to accumulate early and avoid friction. Steady incline with no rush.',
+      label: 'Slow Ramp — near-zero fee, low start, grow over time',
+      description: 'A near-zero-fee (0.01%) low-start bonding curve for long-term growth. Perfect for creators who want users to accumulate early and avoid friction. Steady incline with no rush.',
       config: {
         collectFeeMode: 0,
         activationType: 1,
@@ -186,7 +192,7 @@ async function main() {
     },
     {
       label: 'Trench Lock — Half LP locked, adds trust',
-      description: 'Same price behavior as Classic, but with 50% of LP locked to reduce fear of instant exits. Great for tokens looking to earn community trust or deploy under a shared brand.',
+      description: 'Same price behavior as Classic, but with 50% of LP locked to reduce fear of instant exits. Starts with a 1% fee. Great for tokens looking to earn community trust or deploy under a shared brand.',
       config: {
         collectFeeMode: 0,
         activationType: 1,
@@ -216,7 +222,7 @@ async function main() {
         },
         poolFees: {
           baseFee: {
-            cliffFeeNumerator: bpsToFeeNumerator(1),
+            cliffFeeNumerator: bpsToFeeNumerator(100),
             numberOfPeriod: 0,
             periodFrequency: new BN(0),
             reductionFactor: new BN(0),
@@ -232,7 +238,7 @@ async function main() {
     },
     {
       label: 'Builder — Fees fall over time, with unlock schedule',
-      description: 'Starts with higher fees and unlocks slowly over days. Ideal for tokens with a roadmap. Fees drop as time goes on. Includes optional token vesting logic and cliff.',
+      description: 'Starts with a 2% fee that drops linearly over days. Ideal for tokens with a roadmap. Includes optional token vesting logic and cliff.',
       config: {
         collectFeeMode: 0,
         activationType: 1,
@@ -260,7 +266,7 @@ async function main() {
         },
         poolFees: {
           baseFee: {
-            cliffFeeNumerator: bpsToFeeNumerator(2),
+            cliffFeeNumerator: bpsToFeeNumerator(200),
             numberOfPeriod: 5,
             periodFrequency: new BN(86400),
             reductionFactor: new BN(25),
@@ -310,9 +316,14 @@ async function main() {
   console.log('pool keys');
   console.log(poolKeys.join('\n===========================================\n'))
 
+  if (DRY_RUN) {
+    console.log('\u26A0\uFE0F  DRY_RUN mode enabled – skipping on-chain transaction submission and Redis writes.');
+    console.log(`Built ${allInstructions.length} instructions across ${presets.length} configs – validation successful.`);
+    return;
+  }
+
   // Build and send a single batched transaction
   console.log('Sending batched transaction for all config creations');
-
 
   const { blockhash } = await connection.getLatestBlockhash('finalized');
   const message = new TransactionMessage({
