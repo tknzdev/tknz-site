@@ -20,20 +20,15 @@ export const handler: Handler = async (event) => {
   }
   try {
     // Fetch recent config keys
-    const raw = await redis.zrange('poolConfigKeys', -500, -1, { rev: true });
+    const raw = await redis.zrange('dbc:config:keys', -10, -1, { rev: true });
     const keys: string[] = Array.isArray(raw) ? raw.map(String) : [];
-    // Bulk fetch all config hashes via Redis pipeline
-    const pipeline = redis.pipeline();
-    for (const key of keys) {
-      pipeline.hgetall(`pool:${key}:config`);
-    }
-    const results = await pipeline.exec();
+    // Fetch all config hashes concurrently
+    const rawResults = (await Promise.all(keys.map(key => redis.hgetall(`dbc:config:${key}`)))) as Record<string, string>[];
     const configs: any[] = [];
-    for (const data of results) {
-      // Each data is a record of string->string or empty object
+    for (const data of rawResults) {
       if (data && Object.keys(data).length > 0) {
         // Parse JSON fields
-        if (data.config) {
+        if (data.config && typeof data.config === 'string') {
           try { data.config = JSON.parse(data.config); } catch {}
         }
         configs.push(data);
