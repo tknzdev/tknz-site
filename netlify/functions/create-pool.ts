@@ -7,6 +7,7 @@ import {
   TransactionMessage,
 } from '@solana/web3.js';
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk';
+import { createTokenMetadata } from '../../src/utils/createTokenMetadata';
 import { Buffer } from 'buffer';
 import dotenv from 'dotenv';
 
@@ -25,12 +26,20 @@ if (process.env.TREASURY_SECRET_KEY) {
 
 const RPC_ENDPOINT = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 
+interface TokenDetails {
+  name: string;
+  ticker: string;
+  description: string;
+  imageUrl: string; // can be data URL or remote URL
+  websiteUrl?: string;
+  twitter?: string;
+  telegram?: string;
+}
+
 interface RequestBody {
   walletAddress: string; // poolCreator
   configKey: string; // existing config public key
-  name: string;
-  symbol: string;
-  uri: string;
+  token: TokenDetails;
 }
 
 export const handler: Handler = async (event) => {
@@ -58,15 +67,38 @@ export const handler: Handler = async (event) => {
 
   try {
     const body: RequestBody = JSON.parse(event.body || '{}');
-    const { walletAddress, configKey, name, symbol, uri } = body;
+    const { walletAddress, configKey, token } = body;
 
-    if (!walletAddress || !configKey || !name || !symbol || !uri) {
+    if (!walletAddress || !configKey || !token) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'walletAddress, configKey, name, symbol and uri are required' }),
+        body: JSON.stringify({ error: 'walletAddress, configKey and token are required' }),
       };
     }
+
+    // 1. Create token metadata JSON & upload, receiving a metadata URI.
+    let metadataResult;
+    try {
+      metadataResult = await createTokenMetadata(token);
+    } catch (metaErr: any) {
+      console.error('Metadata creation failed', metaErr);
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({ error: metaErr?.message || 'metadata upload failed' }),
+      };
+    }
+
+    let { name, symbol, uri } = metadataResult;
+
+    // Metaplex limits safeguard
+    const MAX_NAME_LEN = 32;
+    const MAX_SYMBOL_LEN = 10;
+    const MAX_URI_LEN = 200;
+    if (name.length > MAX_NAME_LEN) name = name.slice(0, MAX_NAME_LEN);
+    if (symbol.length > MAX_SYMBOL_LEN) symbol = symbol.slice(0, MAX_SYMBOL_LEN);
+    if (uri.length > MAX_URI_LEN) uri = uri.slice(0, MAX_URI_LEN);
 
     const connection = new Connection(RPC_ENDPOINT, 'confirmed');
     const dbcClient = new DynamicBondingCurveClient(connection, 'confirmed');
@@ -105,6 +137,7 @@ export const handler: Handler = async (event) => {
         transaction: txBase64,
         baseMint: baseMintKeypair.publicKey.toBase58(),
         config: configKey,
+        metadataUri: uri,
       }),
     };
   } catch (error: any) {
