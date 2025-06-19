@@ -6,7 +6,9 @@ import {
   VersionedTransaction,
   TransactionMessage,
 } from '@solana/web3.js';
-import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk';
+
+import { NATIVE_MINT, TOKEN_PROGRAM_ID,getAssociatedTokenAddressSync } from '@solana/spl-token';
+import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk';
 import { createTokenMetadata } from '../../src/utils/createTokenMetadata';
 import { Buffer } from 'buffer';
 import dotenv from 'dotenv';
@@ -90,15 +92,29 @@ export const handler: Handler = async (event) => {
       };
     }
 
+    let userPubkey: PublicKey;
+    try {
+      userPubkey = new PublicKey(walletAddress);
+    } catch (err) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid walletAddress' }) };
+    }
+
+    let configPubkey: PublicKey;
+    try {
+      configPubkey = new PublicKey(configKey);
+    } catch (err) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid configKey' }) };
+    }
+
     let { name, symbol, uri } = metadataResult;
 
     // Metaplex limits safeguard
     const MAX_NAME_LEN = 32;
     const MAX_SYMBOL_LEN = 10;
-    const MAX_URI_LEN = 200;
+    
     if (name.length > MAX_NAME_LEN) name = name.slice(0, MAX_NAME_LEN);
     if (symbol.length > MAX_SYMBOL_LEN) symbol = symbol.slice(0, MAX_SYMBOL_LEN);
-    if (uri.length > MAX_URI_LEN) uri = uri.slice(0, MAX_URI_LEN);
+    
 
     const connection = new Connection(RPC_ENDPOINT, 'confirmed');
     const dbcClient = new DynamicBondingCurveClient(connection, 'confirmed');
@@ -108,13 +124,23 @@ export const handler: Handler = async (event) => {
 
     const transaction = await dbcClient.pool.createPool({
       baseMint: baseMintKeypair.publicKey,
-      config: new PublicKey(configKey),
+      config: configPubkey,
       name,
       symbol,
       uri,
       payer: TREASURY_KP.publicKey,
-      poolCreator: new PublicKey(walletAddress),
+      poolCreator: userPubkey,
     });
+
+    const poolAddress = deriveDbcPoolAddress(
+      NATIVE_MINT,
+      baseMintKeypair.publicKey,
+      configPubkey
+    );
+
+    const ata = getAssociatedTokenAddressSync(baseMintKeypair.publicKey, userPubkey, true, TOKEN_PROGRAM_ID);
+
+    console.log('Derived DBC pool address:', poolAddress.toBase58());
 
     // Build versioned transaction and presign with treasury + baseMint
     const { blockhash } = await connection.getLatestBlockhash('finalized');
@@ -134,9 +160,14 @@ export const handler: Handler = async (event) => {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        transaction: txBase64,
-        baseMint: baseMintKeypair.publicKey.toBase58(),
-        config: configKey,
+        transactions: [txBase64],
+        ata: ata.toBase58(),
+        mint: baseMintKeypair.publicKey.toBase58(),
+        tokenMetadata: metadataResult,
+        pool: poolAddress.toBase58(),
+        poolConfigKey: configKey,
+        feeSol: 0.0001, // todo derive the fee from the config
+        feeLamports: 100000, // todo derive the fee from the config
         metadataUri: uri,
       }),
     };
