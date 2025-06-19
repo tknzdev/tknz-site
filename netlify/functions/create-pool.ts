@@ -9,8 +9,6 @@ import {
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk';
 import { Buffer } from 'buffer';
 import dotenv from 'dotenv';
-import fs from 'fs';
-import path from 'path';
 
 dotenv.config();
 
@@ -22,10 +20,7 @@ if (process.env.TREASURY_SECRET_KEY) {
     Uint8Array.from(JSON.parse(process.env.TREASURY_SECRET_KEY))
   );
 } else {
-  // fallback to repo path used by utility scripts
-  const treasuryPath = path.resolve('config/keys/treasury.json');
-  const secret = JSON.parse(fs.readFileSync(treasuryPath, 'utf8'));
-  TREASURY_KP = Keypair.fromSecretKey(Buffer.from(secret));
+  throw new Error('TREASURY_SECRET_KEY is not set');
 }
 
 const RPC_ENDPOINT = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
@@ -98,9 +93,9 @@ export const handler: Handler = async (event) => {
     }).compileToV0Message();
 
     const vtx = new VersionedTransaction(message);
-    vtx.sign([TREASURY_KP, baseMintKeypair]);
+    vtx.sign([baseMintKeypair, TREASURY_KP]);
 
-    const serialized = vtx.serialize({ requireAllSignatures: false, verifySignatures: false });
+    const serialized = vtx.serialize();
     const txBase64 = Buffer.from(serialized).toString('base64');
 
     return {
