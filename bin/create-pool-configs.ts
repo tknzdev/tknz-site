@@ -18,7 +18,7 @@ async function main() {
   const DRY_RUN = process.env.DRY_RUN === 'true';
 
   // Load treasury keypair from config file
-  const treasuryPath = path.resolve(process.cwd(), 'config/keys/treasury.json');
+  const treasuryPath = path.resolve(process.cwd(), 'config/keys/creator.json');
   const treasurySecret = JSON.parse(fs.readFileSync(treasuryPath, 'utf-8'));
   const TREASURY_KP = Keypair.fromSecretKey(Buffer.from(treasurySecret));
   const treasuryPubkey = TREASURY_KP.publicKey;
@@ -36,9 +36,17 @@ async function main() {
 
   // We already defined DRY_RUN at the top of main()
 
-  // Prepare batching arrays
-  const allInstructions: TransactionInstruction[] = [];
-  const allSigners: Keypair[] = [TREASURY_KP];
+  // Will accumulate metadata for each preset so we can batch-send afterwards.
+  interface TxMeta {
+    instructions: TransactionInstruction[];
+    signers: Keypair[]; // includes TREASURY_KP + config keypair for this config
+    pubkey: string; // config address (for logging / redis)
+    label: string;
+    description: string;
+    config: any;
+  }
+
+  const metas: TxMeta[] = [];
   const poolKeys: string[] = [];
   // Collect config info for deferred Redis write
   type ConfigInfo = {
@@ -289,7 +297,7 @@ async function main() {
     const configPubkey = configKeypair.publicKey;
     console.log('configPubkey', configPubkey.toBase58());
 
-    // Build createConfig transaction instructions and collect for batching
+    // Build createConfig transaction instructions
     const txV0 = await dbcClient.partner.createConfig({
       payer: treasuryPubkey,
       config: configPubkey,
@@ -299,65 +307,66 @@ async function main() {
       ...preset.config
     });
 
-    allInstructions.push(...txV0.instructions);
-    allSigners.push(configKeypair);
-    poolKeys.push(configPubkey.toBase58());
-
-    // Defer Redis writes until after successful batch send
-    configs.push({
-      configKeypair,
+    // Store meta for later batching
+    metas.push({
+      instructions: txV0.instructions,
+      signers: [TREASURY_KP, configKeypair],
       pubkey: configPubkey.toBase58(),
       label: preset.label,
       description: preset.description,
       config: preset.config,
     });
+
+    poolKeys.push(configPubkey.toBase58());
   }
   
   console.log('pool keys');
-  console.log(poolKeys.join('\n===========================================\n'))
+  console.log(poolKeys.join('\n===========================================\n'));
+
+  const totalInstr = metas.reduce((sum, m) => sum + m.instructions.length, 0);
 
   if (DRY_RUN) {
     console.log('\u26A0\uFE0F  DRY_RUN mode enabled – skipping on-chain transaction submission and Redis writes.');
-    console.log(`Built ${allInstructions.length} instructions across ${presets.length} configs – validation successful.`);
+    console.log(`Built ${totalInstr} instructions across ${metas.length} configs – validation successful.`);
     return;
   }
 
-  // Build and send a single batched transaction
-  console.log('Sending batched transaction for all config creations');
+  // Send each config in its own transaction
+  for (const [idx, meta] of metas.entries()) {
+    const { blockhash } = await connection.getLatestBlockhash('finalized');
 
-  const { blockhash } = await connection.getLatestBlockhash('finalized');
-  const message = new TransactionMessage({
-    payerKey: treasuryPubkey,
-    recentBlockhash: blockhash,
-    instructions: allInstructions,
-  }).compileToV0Message();
-  const batchTx = new VersionedTransaction(message);
-  batchTx.sign(allSigners);
-  const batchTxSig = await connection.sendTransaction(batchTx);
-  await connection.confirmTransaction(batchTxSig, 'finalized');
-  console.log('Batch transaction signature:', batchTxSig);
+    const message = new TransactionMessage({
+      payerKey: treasuryPubkey,
+      recentBlockhash: blockhash,
+      instructions: meta.instructions,
+    }).compileToV0Message();
 
-  // Persist all Redis data after successful transaction
-  for (const { configKeypair, pubkey, label, description, config } of configs) {
-    // Persist signer secret
-    const signerKey = `dbc:signer:${treasuryPubkey.toBase58()}:${pubkey}`;
+    const tx = new VersionedTransaction(message);
+    tx.sign(meta.signers);
+
+    const sig = await connection.sendTransaction(tx);
+    await connection.confirmTransaction(sig, 'finalized');
+    console.log(`Tx ${idx + 1}/${metas.length} sent – signature: ${sig}`);
+
+    // Redis persistence
+    const configKeypair = meta.signers.find(s => s.publicKey.toBase58() === meta.pubkey && s !== TREASURY_KP) as Keypair;
+    const signerKey = `dbc:signer:${treasuryPubkey.toBase58()}:${meta.pubkey}`;
     await redis.set(signerKey, Buffer.from(configKeypair.secretKey).toString('base64'));
-    // Add to sorted set of config keys
-    await redis.zadd('dbc:config:keys', { score: Date.now(), member: pubkey });
-    // Store full config definition with txSig
-    const poolKey = `dbc:config:${pubkey}`;
+    await redis.zadd('dbc:config:keys', { score: Date.now(), member: meta.pubkey });
+    const poolKey = `dbc:config:${meta.pubkey}`;
     await redis.hset(poolKey, {
-      label,
-      description,
-      config: JSON.stringify(config),
-      pubkey,
-      txSig: batchTxSig,
+      label: meta.label,
+      description: meta.description,
+      config: JSON.stringify(meta.config),
+      pubkey: meta.pubkey,
+      txSig: sig,
     });
   }
+
   // Trim sorted set to latest 500
   await redis.zremrangebyrank('dbc:config:keys', 0, -10);
 
-  console.log('All presets processed and transaction confirmed');
+  console.log('All presets processed and transactions confirmed');
 }
 
 main().catch(err => {
