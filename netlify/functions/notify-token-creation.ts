@@ -18,11 +18,12 @@ function createTelegramPhotoMessage(payload: any, TELEGRAM_CHAT_ID: string, TELE
   // Build Telegram message
   const name = payload.token?.name || '';
   const symbol = (payload.token?.symbol || payload.token?.ticker || '').toUpperCase();
-  const pool = payload.pool || '';
-  const poolUrl = `https://solscan.io/account/${pool}`;
+  const solscanUrl = `https://solscan.io/account/${payload.mint}`;
+  const lpUrl = `https://launch.tknz.fun/token/${payload.mint}`;
 
    // Construct HTML caption
-   const tknzLink = `<a href="${poolUrl}">View on Solscan</a>`;
+   const solscanLink = `<a href="${solscanUrl}">View on Solscan</a>`;
+   const lpLink = `<a href="${lpUrl}">View on Launchpad</a>`;
    const xLink = payload.token?.twitter ? `<a href="${xUrl}">View on X</a>` : '';
    const date = new Date(Number(payload.createdAt));
    const formattedLaunchTime = format(date, 'MMM d, yyyy h:mm a');
@@ -33,7 +34,8 @@ function createTelegramPhotoMessage(payload: any, TELEGRAM_CHAT_ID: string, TELE
    const caption = `<b>🚀 New Token Launch on Meteora!</b>\n\n` +
      `<b>🪙 Name:</b> ${escapedName}\n` +
      `<b>📈 Ticker:</b> $${escapedTicker}\n` +
-     `<b>🌐</b> ${tknzLink}\n` +
+     `<b>🌐</b> ${solscanLink}\n` +
+     `<b>🌐</b> ${lpLink}\n` +
      (xUrl ? `<b>🐦</b> ${xLink}\n` : '') +
      `<b>🔗 Launched:</b> ${escapedFormattedLaunchTime}`;
    
