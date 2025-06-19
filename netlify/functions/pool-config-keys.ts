@@ -1,5 +1,6 @@
 import { Handler } from '@netlify/functions';
 import { Redis } from '@upstash/redis';
+import process from 'process';
 
 // Initialize Redis client
 const redis = new Redis({
@@ -21,8 +22,8 @@ export const handler: Handler = async (event) => {
     return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed; use GET' }) };
   }
   try {
-    // Fetch up to 500 most recent poolConfigKeys (highest score first)
-    const raw = await redis.zrange('poolConfigKeys', -500, -1, { rev: true });
+    // Fetch up to 10 most recent poolConfigKeys (highest score first)
+    const raw = await redis.zrange('dbc:config:keys', -10, -1, { rev: true });
     const keys = Array.isArray(raw) ? raw.map(String) : [];
     return { statusCode: 200, headers, body: JSON.stringify({ keys }) };
   } catch (err: any) {
