@@ -6,7 +6,6 @@ import {
   PublicKey,
   SystemProgram,
   TransactionInstruction,
-  Transaction,
   VersionedTransaction,
   TransactionMessage,
   LAMPORTS_PER_SOL,
@@ -253,6 +252,7 @@ export const handler: Handler = async (event) => {
       return { statusCode: 500, headers, body: JSON.stringify({ error: 'Server misconfiguration: RPC_ENDPOINT' }) };
     }
     const connection = new Connection(RPC_ENDPOINT);
+
     let userPubkey: PublicKey;
     try {
       userPubkey = new PublicKey(walletAddress);
