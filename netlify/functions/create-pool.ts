@@ -5,7 +5,9 @@ import {
   PublicKey,
   VersionedTransaction,
   TransactionMessage,
+  LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
+import BN from 'bn.js';
 
 import { NATIVE_MINT, TOKEN_PROGRAM_ID,getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk';
@@ -42,6 +44,8 @@ interface RequestBody {
   walletAddress: string; // poolCreator
   configKey: string; // existing config public key
   token: TokenDetails;
+  /** Optional initial buy amount in SOL */
+  buyAmount?: number;
 }
 
 export const handler: Handler = async (event) => {
@@ -69,7 +73,7 @@ export const handler: Handler = async (event) => {
 
   try {
     const body: RequestBody = JSON.parse(event.body || '{}');
-    const { walletAddress, configKey, token } = body;
+    const { walletAddress, configKey, token, buyAmount = 0 } = body;
 
     if (!walletAddress || !configKey || !token) {
       return {
@@ -122,15 +126,33 @@ export const handler: Handler = async (event) => {
     // Generate base mint keypair that will back the pool
     const baseMintKeypair = Keypair.generate();
 
-    const transaction = await dbcClient.pool.createPool({
-      baseMint: baseMintKeypair.publicKey,
-      config: configPubkey,
-      name,
-      symbol,
-      uri,
-      payer: TREASURY_KP.publicKey,
-      poolCreator: userPubkey,
-    });
+    // Determine buy lamports (optional initial buy)
+    const buyLamports = Math.floor(buyAmount * LAMPORTS_PER_SOL);
+    let transaction;
+    if (buyLamports > 0) {
+      // Create pool and immediately swap buyAmount
+      transaction = await dbcClient.pool.createPoolWithFirstBuy({
+        baseMint: baseMintKeypair.publicKey,
+        config: configPubkey,
+        name,
+        symbol,
+        uri,
+        payer: TREASURY_KP.publicKey,
+        poolCreator: userPubkey,
+        buyAmount: new BN(buyLamports),
+      });
+    } else {
+      // Standard pool creation only
+      transaction = await dbcClient.pool.createPool({
+        baseMint: baseMintKeypair.publicKey,
+        config: configPubkey,
+        name,
+        symbol,
+        uri,
+        payer: TREASURY_KP.publicKey,
+        poolCreator: userPubkey,
+      });
+    }
 
     const poolAddress = deriveDbcPoolAddress(
       NATIVE_MINT,
@@ -169,6 +191,9 @@ export const handler: Handler = async (event) => {
         feeSol: 0.0001, // todo derive the fee from the config
         feeLamports: 100000, // todo derive the fee from the config
         metadataUri: uri,
+        // Echo buy amounts
+        buySol: buyAmount,
+        buyLamports,
       }),
     };
   } catch (error: any) {
