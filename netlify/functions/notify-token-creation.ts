@@ -17,7 +17,7 @@ function createTelegramPhotoMessage(payload: any, TELEGRAM_CHAT_ID: string, TELE
   const image = payload.token?.imageUrl || 'https://placehold.co/600x400.png?text=TKNZ';
   // Build Telegram message
   const name = payload.token?.name || '';
-  const symbol = payload.token?.symbol || '';
+  const symbol = (payload.token?.symbol || payload.token?.ticker || '').toUpperCase();
   const pool = payload.pool || '';
   const poolUrl = `https://solscan.io/account/${pool}`;
 
