@@ -9,7 +9,7 @@ import dotenv from 'dotenv';
 import { Redis } from '@upstash/redis';
 import { Buffer } from 'buffer';
 import BN from 'bn.js';
-import { DynamicBondingCurveClient, bpsToFeeNumerator, FeeSchedulerMode, getSqrtPriceFromPrice, MAX_SQRT_PRICE } from '@meteora-ag/dynamic-bonding-curve-sdk';
+import { DynamicBondingCurveClient, bpsToFeeNumerator, FeeSchedulerMode, getSqrtPriceFromPrice, getPriceFromSqrtPrice, MAX_SQRT_PRICE } from '@meteora-ag/dynamic-bonding-curve-sdk';
 
 dotenv.config();
 
@@ -104,9 +104,10 @@ async function main() {
           },
           dynamicFee: null,
         },
-        sqrtStartPrice: getSqrtPriceFromPrice('1', 9, 9),
+        sqrtStartPrice: getSqrtPriceFromPrice('0.0000069', 9, 9),
         curve: [
-          { sqrtPrice: MAX_SQRT_PRICE, liquidity: poolSupplyRaw },
+          { sqrtPrice: getSqrtPriceFromPrice('0.0000138', 9, 9), liquidity: new BN('50000000000') },
+          { sqrtPrice: getSqrtPriceFromPrice('0.000138', 9, 9), liquidity: new BN(1) },
         ],
       },
     },
@@ -148,9 +149,10 @@ async function main() {
           },
           dynamicFee: null,
         },
-        sqrtStartPrice: getSqrtPriceFromPrice('5', 9, 9),
+        sqrtStartPrice: getSqrtPriceFromPrice('0.0000069', 9, 9),
         curve: [
-        { sqrtPrice: MAX_SQRT_PRICE, liquidity: poolSupplyRaw },
+          { sqrtPrice: getSqrtPriceFromPrice('0.00001', 9, 9), liquidity: new BN('10000000000') },
+          { sqrtPrice: getSqrtPriceFromPrice('0.001', 9, 9), liquidity: new BN(1) },
         ],
       },
     },
@@ -192,9 +194,10 @@ async function main() {
           },
           dynamicFee: null,
         },
-        sqrtStartPrice: getSqrtPriceFromPrice('0.5', 9, 9),
+        sqrtStartPrice: getSqrtPriceFromPrice('0.00000345', 9, 9),
         curve: [
-            { sqrtPrice: MAX_SQRT_PRICE, liquidity: poolSupplyRaw },
+          { sqrtPrice: getSqrtPriceFromPrice('0.0000069', 9, 9), liquidity: new BN('100000000000') },
+          { sqrtPrice: getSqrtPriceFromPrice('0.000069', 9, 9), liquidity: new BN(1) },
         ],
       },
     },
@@ -238,9 +241,10 @@ async function main() {
           },
           dynamicFee: null,
         },
-        sqrtStartPrice: getSqrtPriceFromPrice('1', 9, 9),
+        sqrtStartPrice: getSqrtPriceFromPrice('0.0000069', 9, 9),
         curve: [
-          { sqrtPrice: MAX_SQRT_PRICE, liquidity: poolSupplyRaw },
+          { sqrtPrice: getSqrtPriceFromPrice('0.0000138', 9, 9), liquidity: new BN('50000000000') },
+          { sqrtPrice: getSqrtPriceFromPrice('0.000138', 9, 9), liquidity: new BN(1) },
         ],
       },
     },
@@ -282,9 +286,10 @@ async function main() {
           },
           dynamicFee: null,
         },
-        sqrtStartPrice: getSqrtPriceFromPrice('1', 9, 9),
+        sqrtStartPrice: getSqrtPriceFromPrice('0.0000069', 9, 9),
         curve: [
-          { sqrtPrice: MAX_SQRT_PRICE, liquidity: poolSupplyRaw },
+          { sqrtPrice: getSqrtPriceFromPrice('0.0000138', 9, 9), liquidity: new BN('50000000000') },
+          { sqrtPrice: getSqrtPriceFromPrice('0.000138', 9, 9), liquidity: new BN(1) },
         ],
       },
     },
@@ -326,6 +331,21 @@ async function main() {
   const totalInstr = metas.reduce((sum, m) => sum + m.instructions.length, 0);
 
   if (DRY_RUN) {
+    console.log('\nBonding Curve Preview (DRY_RUN)\n');
+    // Display each preset's curve points as human-readable prices and liquidity
+    const table = presets.map(p => {
+      const [start, end] = p.config.curve;
+      const startPrice = getPriceFromSqrtPrice(start.sqrtPrice, decimals, decimals).toFixed(decimals);
+      const endPrice = getPriceFromSqrtPrice(end.sqrtPrice, decimals, decimals).toFixed(decimals);
+      return {
+        Label: p.label,
+        'Start Price (SOL)': startPrice,
+        'Start Liquidity': start.liquidity.toString(),
+        'End Price (SOL)': endPrice,
+        'End Liquidity': end.liquidity.toString(),
+      };
+    });
+    console.table(table);
     console.log('\u26A0\uFE0F  DRY_RUN mode enabled – skipping on-chain transaction submission and Redis writes.');
     console.log(`Built ${totalInstr} instructions across ${metas.length} configs – validation successful.`);
     return;
