@@ -106,7 +106,7 @@ async function main() {
         },
         sqrtStartPrice: getSqrtPriceFromPrice('0.0000069', 9, 9),
         curve: [
-          { sqrtPrice: getSqrtPriceFromPrice('0.0000138', 9, 9), liquidity: new BN('50000000000') },
+          { sqrtPrice: getSqrtPriceFromPrice('0.0000138', 9, 9), liquidity: new BN('1000000000000') },
           { sqrtPrice: getSqrtPriceFromPrice('0.000138', 9, 9), liquidity: new BN(1) },
         ],
       },
@@ -151,7 +151,7 @@ async function main() {
         },
         sqrtStartPrice: getSqrtPriceFromPrice('0.0000069', 9, 9),
         curve: [
-          { sqrtPrice: getSqrtPriceFromPrice('0.00001', 9, 9), liquidity: new BN('10000000000') },
+          { sqrtPrice: getSqrtPriceFromPrice('0.00001', 9, 9), liquidity: new BN('500000000000') },
           { sqrtPrice: getSqrtPriceFromPrice('0.001', 9, 9), liquidity: new BN(1) },
         ],
       },
@@ -196,7 +196,7 @@ async function main() {
         },
         sqrtStartPrice: getSqrtPriceFromPrice('0.00000345', 9, 9),
         curve: [
-          { sqrtPrice: getSqrtPriceFromPrice('0.0000069', 9, 9), liquidity: new BN('100000000000') },
+          { sqrtPrice: getSqrtPriceFromPrice('0.0000069', 9, 9), liquidity: new BN('2000000000000') },
           { sqrtPrice: getSqrtPriceFromPrice('0.000069', 9, 9), liquidity: new BN(1) },
         ],
       },
@@ -243,7 +243,7 @@ async function main() {
         },
         sqrtStartPrice: getSqrtPriceFromPrice('0.0000069', 9, 9),
         curve: [
-          { sqrtPrice: getSqrtPriceFromPrice('0.0000138', 9, 9), liquidity: new BN('50000000000') },
+          { sqrtPrice: getSqrtPriceFromPrice('0.0000138', 9, 9), liquidity: new BN('1000000000000') },
           { sqrtPrice: getSqrtPriceFromPrice('0.000138', 9, 9), liquidity: new BN(1) },
         ],
       },
@@ -288,7 +288,7 @@ async function main() {
         },
         sqrtStartPrice: getSqrtPriceFromPrice('0.0000069', 9, 9),
         curve: [
-          { sqrtPrice: getSqrtPriceFromPrice('0.0000138', 9, 9), liquidity: new BN('50000000000') },
+          { sqrtPrice: getSqrtPriceFromPrice('0.0000138', 9, 9), liquidity: new BN('1000000000000') },
           { sqrtPrice: getSqrtPriceFromPrice('0.000138', 9, 9), liquidity: new BN(1) },
         ],
       },
