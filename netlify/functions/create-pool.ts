@@ -131,15 +131,22 @@ export const handler: Handler = async (event) => {
     let transaction;
     if (buyLamports > 0) {
       // Create pool and immediately swap buyAmount
+      // Note: minimumAmountOut set to zero to avoid swap failures due to slippage constraints
       transaction = await dbcClient.pool.createPoolWithFirstBuy({
-        baseMint: baseMintKeypair.publicKey,
-        config: configPubkey,
-        name,
-        symbol,
-        uri,
-        payer: TREASURY_KP.publicKey,
-        poolCreator: userPubkey,
-        buyAmount: new BN(buyLamports),
+        // Pool creation parameters nested under createPoolParam
+        createPoolParam: {
+          baseMint: baseMintKeypair.publicKey,
+          config: configPubkey,
+          name,
+          symbol,
+          uri,
+          payer: TREASURY_KP.publicKey,
+          poolCreator: userPubkey,
+        },
+        // Buy parameters at top level
+        buyAmount: new BN(Math.floor(0.0005 * LAMPORTS_PER_SOL)),
+        minimumAmountOut: new BN(0), // no slippage enforcement
+        referralTokenAccount: null,
       });
     } else {
       // Standard pool creation only
@@ -150,7 +157,7 @@ export const handler: Handler = async (event) => {
         symbol,
         uri,
         payer: TREASURY_KP.publicKey,
-        poolCreator: userPubkey,
+        poolCreator: userPubkey
       });
     }
 
