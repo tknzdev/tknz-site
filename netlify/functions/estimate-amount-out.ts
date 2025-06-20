@@ -1,10 +1,7 @@
 import type { Handler } from '@netlify/functions';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import BN from 'bn.js';
-import {
-  getNextSqrtPriceFromInput,
-  getDeltaAmountBaseUnsigned,
-} from '@meteora-ag/dynamic-bonding-curve-sdk';
+import { getSwapAmountFromQuoteToBase, getPriceFromSqrtPrice } from '@meteora-ag/dynamic-bonding-curve-sdk';
 
 // CORS & common headers
 const headers = {
@@ -13,6 +10,10 @@ const headers = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Content-Type': 'application/json',
 };
+
+function solToLamports(sol: number | string): BN {
+  return new BN(Math.floor(parseFloat(sol.toString()) * 1e9));
+}
 
 /**
  * Estimate amount of base tokens received for a given buy amount (in SOL) on initial pool creation.
@@ -29,6 +30,7 @@ export const handler: Handler = async (event) => {
   }
 
   try {
+    console.log('estimate-amount-out', typeof event.body);
     const { config, buyAmountSol } = JSON.parse(event.body || '{}');
     // Validate input
     if (!config || typeof buyAmountSol !== 'number') {
@@ -39,33 +41,50 @@ export const handler: Handler = async (event) => {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Curve data is missing or invalid' }) };
     }
 
+    
+    console.log('buyAmountSol', buyAmountSol);
+
     // Convert buy amount in SOL to lamports (BN)
-    const inLamports = new BN(Math.floor(buyAmountSol * LAMPORTS_PER_SOL).toString());
+    const inLamports = solToLamports(buyAmountSol);
+    console.log('inLamports', inLamports);
 
+    console.log('config.curve[0].sqrtPrice', config.curve[0].sqrtPrice);
     // Parse first segment parameters
-    const sqrtMinPrice = new BN(config.curve[0].sqrtPrice);
-    const sqrtNextBoundary = new BN(config.curve[1].sqrtPrice);
-    const liquidity = new BN(config.curve[0].liquidity);
-
-    // Compute the post-swap sqrtPrice within the first segment
-    const nextSqrtPrice = getNextSqrtPriceFromInput(
-      sqrtMinPrice,
-      liquidity,
-      inLamports,
-      /* quoteForBase = */ false
-    );
-    // Compute amount of base tokens minted (quote → base)
-    const amountOut = getDeltaAmountBaseUnsigned(
-      sqrtMinPrice,
-      nextSqrtPrice,
-      liquidity,
-      /* roundDown = */ 1
-    );
-
+    const sqrtMinPrice = new BN(config.curve[0].sqrtPrice, 16);
+    console.log('sqrtMinPrice', sqrtMinPrice, sqrtMinPrice.toString());
+    const sqrtNextBoundary = new BN(config.curve[1].sqrtPrice, 16);
+    console.log('sqrtNextBoundary', sqrtNextBoundary, sqrtNextBoundary.toString());
+    const liquidity = new BN(config.curve[0].liquidity, 16);
+    console.log('liquidity', liquidity, liquidity.toString());
+    // Estimate swap across full bonding curve
+    const curvePoints = config.curve.map((pt: any) => ({
+      sqrtPrice: new BN(pt.sqrtPrice, 16),
+      liquidity: new BN(pt.liquidity, 16),
+    }));
+    // Ensure current price is slightly below first segment to include it
+    const startSqrtPrice = sqrtMinPrice.sub(new BN(1));
+    let amountOut: BN;
+    try {
+      const swapResult = getSwapAmountFromQuoteToBase(
+        { curve: curvePoints },
+        startSqrtPrice,
+        inLamports
+      );
+      amountOut = swapResult.outputAmount;
+      console.log('swapResult', swapResult);
+    } catch (err: any) {
+      console.warn('Swap estimation failed, using linear fallback:', err.message || err);
+      // Fallback: approximate base tokens = floor(buyAmountSol / startPrice) * 10^decimals
+      const decimals = 9;
+      const priceStart = getPriceFromSqrtPrice(sqrtMinPrice, decimals, decimals);
+      const priceNum = parseFloat(priceStart.toFixed(decimals));
+      const approxTokens = Math.floor(buyAmountSol / priceNum * Math.pow(10, decimals));
+      amountOut = new BN(approxTokens.toString());
+    }
     return {
       statusCode: 200,
       headers,
-      body: JSON.stringify({ amountOut: amountOut.toString() }),
+      body: JSON.stringify({ amountIn: inLamports.toString(), amountOut: amountOut.toString() }),
     };
   } catch (error: any) {
     console.error('estimate-amount-out error', error);
