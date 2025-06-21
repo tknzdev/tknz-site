@@ -53,35 +53,38 @@ Check out the live demo or install from the Chrome Web Store:
    ```
 2. Install dependencies:
    ```bash
-   npm install
+   yarn install
    ```
 
 ### Development
-Launch the development server with hot-reloading:
+Use the Makefile for common tasks:
 ```bash
-npm run dev
+make dev           # Launch the development server with hot-reloading
 ```
-  - Access the app at `http://localhost:5173/`.
-  - To test Netlify functions locally:
-    ```bash
-    npm run dev:netlify
-    ```
+- Access the app at `http://localhost:5173/`.
+```bash
+make dev-netlify   # Test Netlify functions locally
+```
 
 ### Testing
 
 Run the test suite, including TypeScript function handlers, using:
 ```bash
-npm test
+make test
 ```
 
 ### Production Build & Preview
 1. Build for production:
    ```bash
-   npm run build
+   make build
    ```
 2. Preview the production build:
    ```bash
-   npm run preview
+   make preview
+   ```
+3. Deploy to Netlify:
+   ```bash
+   make deploy
    ```
 
 ## Project Structure
@@ -117,6 +120,24 @@ npm test
 - Tailwind and PostCSS configs live in `tailwind.config.js` and `postcss.config.js`.
 - Environment variables for Netlify Functions can be set in the Netlify dashboard or `.env` files.
   
+## CLI & Utility Scripts
+
+For on-chain pool configuration and related tasks, the `bin/` directory contains helper scripts:
+
+- `bin/creast-basic-pool-config.ts`: Create a single "Classic" pool configuration, sign and submit it on-chain, and store its key and metadata in Redis. Usage:
+  ```bash
+  make create-basic-pool-config
+  ```
+- `bin/create-pool-configs-v1.ts`: Bulk create multiple pool configurations (presets), submit on-chain, and persist metadata in Redis.
+
+Ensure the following environment variables are set:
+```bash
+SOLANA_RPC_URL      # Solana RPC endpoint (e.g., devnet or mainnet)
+UPSTASH_REDIS_REST_URL
+UPSTASH_REDIS_REST_TOKEN
+# (Optional) DRY_RUN=true  to skip on-chain and Redis writes
+```
+
 ## API Reference
 
 ### Leaderboard Endpoint
