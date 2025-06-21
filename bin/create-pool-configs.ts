@@ -9,387 +9,141 @@ import dotenv from 'dotenv';
 import { Redis } from '@upstash/redis';
 import { Buffer } from 'buffer';
 import BN from 'bn.js';
-import { DynamicBondingCurveClient, bpsToFeeNumerator, FeeSchedulerMode, getSqrtPriceFromPrice, getPriceFromSqrtPrice, MAX_SQRT_PRICE } from '@meteora-ag/dynamic-bonding-curve-sdk';
+import Decimal from 'decimal.js';
+import {
+  DynamicBondingCurveClient,
+  buildCurveWithLiquidityWeights,
+  ActivationType,
+  CollectFeeMode,
+  MigrationOption,
+  MigrationFeeOption,
+  TokenType,
+  TokenDecimal,
+  TokenUpdateAuthorityOption,
+  BaseFeeMode,
+} from '@meteora-ag/dynamic-bonding-curve-sdk';
 
 dotenv.config();
 
 async function main() {
-  // Enable DRY_RUN to skip on-chain submissions and redis writes (validation only)
   const DRY_RUN = process.env.DRY_RUN === 'true';
 
-  // Load treasury keypair from config file
-  const treasuryPath = path.resolve(process.cwd(), 'config/keys/creator.json');
-  const treasurySecret = JSON.parse(fs.readFileSync(treasuryPath, 'utf-8'));
-  const TREASURY_KP = Keypair.fromSecretKey(Buffer.from(treasurySecret));
-  const treasuryPubkey = TREASURY_KP.publicKey;
+  // Treasury keypair
+  const keyPath = path.resolve(process.cwd(), 'config/keys/creator.json');
+  const secret = JSON.parse(fs.readFileSync(keyPath, 'utf-8'));
+  const TREASURY_KP = Keypair.fromSecretKey(Buffer.from(secret));
+  const treasury = TREASURY_KP.publicKey;
+  console.log('TREASURY_KP', treasury.toBase58());
 
-  console.log('TREASURY_KP', TREASURY_KP.publicKey.toBase58());
-  // Initialize Redis client (skipped in DRY_RUN)
-  const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
-  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
-  const redis = DRY_RUN ? (null as unknown as Redis) : new Redis({ url: redisUrl!, token: redisToken! });
+  // Redis client
+  const redis = DRY_RUN
+    ? (null as unknown as Redis)
+    : new Redis({ url: process.env.UPSTASH_REDIS_REST_URL!, token: process.env.UPSTASH_REDIS_REST_TOKEN! });
 
-  // Initialize Solana connection and DBC client
-  const RPC_ENDPOINT = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
-  const connection = new Connection(RPC_ENDPOINT, 'confirmed');
-  const dbcClient = new DynamicBondingCurveClient(connection, 'confirmed');
+  // Solana connection and DBC client
+  const connection = new Connection(process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com', 'confirmed');
+  const dbc = new DynamicBondingCurveClient(connection, 'confirmed');
 
-  // We already defined DRY_RUN at the top of main()
-
-  // Will accumulate metadata for each preset so we can batch-send afterwards.
-  interface TxMeta {
-    instructions: TransactionInstruction[];
-    signers: Keypair[]; // includes TREASURY_KP + config keypair for this config
-    pubkey: string; // config address (for logging / redis)
-    label: string;
-    description: string;
-    config: any;
-  }
-
-  const metas: TxMeta[] = [];
-  const poolKeys: string[] = [];
-  // Collect config info for deferred Redis write
-  type ConfigInfo = {
-    configKeypair: Keypair;
-    pubkey: string;
-    label: string;
-    description: string;
-    config: any;
-  };
-  const configs: ConfigInfo[] = [];
+  // Base supply in raw units (lamports if decimals=9)
   const DEFAULT_POOL_SUPPLY = 1_000_000_000;
   const decimals = 9;
-  const multiplier = new BN(10).pow(new BN(decimals));
-  const poolSupplyRaw = new BN(DEFAULT_POOL_SUPPLY).mul(multiplier);
-  console.log('poolSupplyRaw', poolSupplyRaw.toString());
+  const poolSupplyRaw = new BN(DEFAULT_POOL_SUPPLY).mul(new BN(10).pow(new BN(decimals)));
+  
+  // Shared BuildCurve parameters
+  const shared = {
+    totalTokenSupply: 1_000_000_000,
+    migrationOption: MigrationOption.MET_DAMM_V2,
+    tokenBaseDecimal: TokenDecimal.NINE,
+    tokenQuoteDecimal: TokenDecimal.NINE,
+    lockedVestingParam: {
+      totalLockedVestingAmount: 0,
+      numberOfVestingPeriod: 0,
+      cliffUnlockAmount: 0,
+      totalVestingDuration: 0,
+      cliffDurationFromMigrationTime: 0,
+    },
+    baseFeeParams: {
+      baseFeeMode: BaseFeeMode.FeeSchedulerLinear,
+      feeSchedulerParam: { startingFeeBps: 100, endingFeeBps: 100, numberOfPeriod: 0, totalDuration: 0 },
+    },
+    dynamicFeeEnabled: false,
+    activationType: ActivationType.Timestamp,
+    collectFeeMode: CollectFeeMode.OnlyQuote,
+    migrationFeeOption: MigrationFeeOption.FixedBps100,
+    tokenType: TokenType.Token2022,
+    partnerLockedLpPercentage: 0,
+    creatorLockedLpPercentage: 0,
+    creatorTradingFeePercentage: 0,
+    leftover: poolSupplyRaw,
+    tokenUpdateAuthority: TokenUpdateAuthorityOption.Mutable,
+    migrationFee: { feePercentage: 25, creatorFeePercentage: 50 },
+  } as const;
 
+  // 16-segment weight generators
+  const flat = () => Array(16).fill(1);
+  const up = () => Array.from({ length: 16 }, (_, i) => new Decimal(1.5).pow(i).toNumber());
+  const down = () => Array.from({ length: 16 }, (_, i) => new Decimal(1.5).pow(15 - i).toNumber());
+  const mild = () => Array.from({ length: 16 }, (_, i) => new Decimal(1.15).pow(i).toNumber());
 
-  // Preset bonding curve definitions
-  const presets: { label: string; description: string; config: any }[] = [
-    {
-      label: 'Classic — Balanced fee, no lock, clean curve',
-      description: 'A well-rounded setup for most launches. Starts with a 1% fee and smooth linear price curve. No LP is locked, making this perfect for fast launches with clean exit paths.',
-      config: {
-        collectFeeMode: 0,
-        activationType: 1,
-        migrationOption: 1,
-        tokenType: 1,
-        tokenDecimal: 9,
-        migrationQuoteThreshold: new BN(1),
-        partnerLpPercentage: 5,
-        partnerLockedLpPercentage: 0,
-        creatorLpPercentage: 95,
-        creatorLockedLpPercentage: 0,
-        migrationFeeOption: 2,
-        migrationFee: { feePercentage: 1, creatorFeePercentage: 0 },
-        creatorTradingFeePercentage: 0,
-        tokenSupply: null,
-        tokenUpdateAuthority: 0,
-        padding0: [],
-        padding1: [],
-        lockedVesting: {
-          amountPerPeriod: new BN(0),
-          cliffDurationFromMigrationTime: new BN(0),
-          frequency: new BN(0),
-          numberOfPeriod: new BN(0),
-          cliffUnlockAmount: new BN(0),
-        },
-        poolFees: {
-          baseFee: {
-            cliffFeeNumerator: bpsToFeeNumerator(100),
-            numberOfPeriod: 0,
-            periodFrequency: new BN(0),
-            reductionFactor: new BN(0),
-            feeSchedulerMode: FeeSchedulerMode.Linear,
-          },
-          dynamicFee: null,
-        },
-        sqrtStartPrice: getSqrtPriceFromPrice('0.0000069', 9, 9),
-        curve: [
-          { sqrtPrice: getSqrtPriceFromPrice('0.0000138', 9, 9), liquidity: new BN('1000000000000') },
-          { sqrtPrice: getSqrtPriceFromPrice('0.000138', 9, 9), liquidity: new BN(1) },
-        ],
-      },
-    },
-    {
-      label: 'Hype — High start, higher fees, faster pump',
-      description: 'Designed to pump early. Starts at a higher price with a 2% fee to capture hype and flip volume. Best for meme-driven or influencer-led tokens aiming to run hot out of the gate.',
-      config: {
-        collectFeeMode: 0,
-        activationType: 1,
-        migrationOption: 1,
-        tokenType: 1,
-        tokenDecimal: 9,
-        migrationQuoteThreshold: new BN(1),
-        partnerLpPercentage: 5,
-        partnerLockedLpPercentage: 0,
-        creatorLpPercentage: 95,
-        creatorLockedLpPercentage: 0,
-        migrationFeeOption: 2,
-        migrationFee: { feePercentage: 1, creatorFeePercentage: 0 },
-        creatorTradingFeePercentage: 0,
-        tokenSupply: null,
-        tokenUpdateAuthority: 0,
-        padding0: [],
-        padding1: [],
-        lockedVesting: {
-          amountPerPeriod: new BN(0),
-          cliffDurationFromMigrationTime: new BN(0),
-          frequency: new BN(0),
-          numberOfPeriod: new BN(0),
-          cliffUnlockAmount: new BN(0),
-        },
-        poolFees: {
-          baseFee: {
-            cliffFeeNumerator: bpsToFeeNumerator(200),
-            numberOfPeriod: 0,
-            periodFrequency: new BN(0),
-            reductionFactor: new BN(0),
-            feeSchedulerMode: FeeSchedulerMode.Linear,
-          },
-          dynamicFee: null,
-        },
-        sqrtStartPrice: getSqrtPriceFromPrice('0.0000069', 9, 9),
-        curve: [
-          { sqrtPrice: getSqrtPriceFromPrice('0.00001', 9, 9), liquidity: new BN('500000000000') },
-          { sqrtPrice: getSqrtPriceFromPrice('0.001', 9, 9), liquidity: new BN(1) },
-        ],
-      },
-    },
-    {
-      label: 'Slow Ramp — near-zero fee, low start, grow over time',
-      description: 'A near-zero-fee (0.01%) low-start bonding curve for long-term growth. Perfect for creators who want users to accumulate early and avoid friction. Steady incline with no rush.',
-      config: {
-        collectFeeMode: 0,
-        activationType: 1,
-        migrationOption: 1,
-        tokenType: 1,
-        tokenDecimal: 9,
-        migrationQuoteThreshold: new BN(1),
-        partnerLpPercentage: 5,
-        partnerLockedLpPercentage: 0,
-        creatorLpPercentage: 95,
-        creatorLockedLpPercentage: 0,
-        migrationFeeOption: 2,
-        migrationFee: { feePercentage: 1, creatorFeePercentage: 0 },
-        creatorTradingFeePercentage: 0,
-        tokenSupply: null,
-        tokenUpdateAuthority: 0,
-        padding0: [],
-        padding1: [],
-        lockedVesting: {
-          amountPerPeriod: new BN(0),
-          cliffDurationFromMigrationTime: new BN(0),
-          frequency: new BN(0),
-          numberOfPeriod: new BN(0),
-          cliffUnlockAmount: new BN(0),
-        },
-        poolFees: {
-          baseFee: {
-            cliffFeeNumerator: bpsToFeeNumerator(1),
-            numberOfPeriod: 0,
-            periodFrequency: new BN(0),     
-            reductionFactor: new BN(0),
-            feeSchedulerMode: FeeSchedulerMode.Linear,
-          },
-          dynamicFee: null,
-        },
-        sqrtStartPrice: getSqrtPriceFromPrice('0.00000345', 9, 9),
-        curve: [
-          { sqrtPrice: getSqrtPriceFromPrice('0.0000069', 9, 9), liquidity: new BN('2000000000000') },
-          { sqrtPrice: getSqrtPriceFromPrice('0.000069', 9, 9), liquidity: new BN(1) },
-        ],
-      },
-    },
-    {
-      label: 'Trench Lock — Half LP locked, adds trust',
-      description: 'Same price behavior as Classic, but with 50% of LP locked to reduce fear of instant exits. Starts with a 1% fee. Great for tokens looking to earn community trust or deploy under a shared brand.',
-      config: {
-        collectFeeMode: 0,
-        activationType: 1,
-        migrationOption: 1,
-        tokenType: 1,
-        tokenDecimal: 9,
-        migrationQuoteThreshold: new BN(1),
-        
-        partnerLpPercentage: 0,
-        partnerLockedLpPercentage: 50,
-        creatorLpPercentage: 0,
-        creatorLockedLpPercentage: 50,
-
-        migrationFeeOption: 2,
-        migrationFee: { feePercentage: 1, creatorFeePercentage: 0 },
-        creatorTradingFeePercentage: 0,
-        tokenSupply: null,
-        tokenUpdateAuthority: 0,
-        padding0: [],
-        padding1: [],
-        lockedVesting: {
-          amountPerPeriod: new BN(0),
-          cliffDurationFromMigrationTime: new BN(0),
-          frequency: new BN(0),
-          numberOfPeriod: new BN(0),
-          cliffUnlockAmount: new BN(0),
-        },
-        poolFees: {
-          baseFee: {
-            cliffFeeNumerator: bpsToFeeNumerator(100),
-            numberOfPeriod: 0,
-            periodFrequency: new BN(0),
-            reductionFactor: new BN(0),
-            feeSchedulerMode: FeeSchedulerMode.Linear,
-          },
-          dynamicFee: null,
-        },
-        sqrtStartPrice: getSqrtPriceFromPrice('0.0000069', 9, 9),
-        curve: [
-          { sqrtPrice: getSqrtPriceFromPrice('0.0000138', 9, 9), liquidity: new BN('1000000000000') },
-          { sqrtPrice: getSqrtPriceFromPrice('0.000138', 9, 9), liquidity: new BN(1) },
-        ],
-      },
-    },
-    {
-      label: 'Builder — Fees fall over time, with unlock schedule',
-      description: 'Starts with a 2% fee that drops linearly over days. Ideal for tokens with a roadmap. Includes optional token vesting logic and cliff.',
-      config: {
-        collectFeeMode: 0,
-        activationType: 1,
-        migrationOption: 1,
-        tokenType: 1,
-        tokenDecimal: 9,
-        migrationQuoteThreshold: new BN(1),
-        partnerLpPercentage: 5,
-        partnerLockedLpPercentage: 0,
-        creatorLpPercentage: 95,
-        creatorLockedLpPercentage: 0,
-        migrationFeeOption: 2,
-        migrationFee: { feePercentage: 1, creatorFeePercentage: 0 },
-        creatorTradingFeePercentage: 0,
-        tokenSupply: null,
-        tokenUpdateAuthority: 0,
-        padding0: [],
-        padding1: [],
-        lockedVesting: {
-          amountPerPeriod: new BN(1000000),
-          cliffDurationFromMigrationTime: new BN(86400),
-          frequency: new BN(86400),
-          numberOfPeriod: new BN(10),
-          cliffUnlockAmount: new BN(10000000),
-        },
-        poolFees: {
-          baseFee: {
-            cliffFeeNumerator: bpsToFeeNumerator(200),
-            numberOfPeriod: 5,
-            periodFrequency: new BN(86400),
-            reductionFactor: new BN(25),
-            feeSchedulerMode: FeeSchedulerMode.Linear,
-          },
-          dynamicFee: null,
-        },
-        sqrtStartPrice: getSqrtPriceFromPrice('0.0000069', 9, 9),
-        curve: [
-          { sqrtPrice: getSqrtPriceFromPrice('0.0000138', 9, 9), liquidity: new BN('1000000000000') },
-          { sqrtPrice: getSqrtPriceFromPrice('0.000138', 9, 9), liquidity: new BN(1) },
-        ],
-      },
-    },
+  // Preset definitions: key, label, description, weights & caps
+  type Preset = { key: string; label: string; description: string; weights: () => number[]; initial: number; migration: number; partnerLp: number; creatorLp: number; migrationFeeOpt?: MigrationFeeOption };
+  const presets: Preset[] = [
+    { key: 'classic',   label: 'Classic — Balanced fee, no lock', weights: flat, initial: 5_000,   migration: 1_000_000, partnerLp: 5,  creatorLp: 95 },
+    { key: 'hype',      label: 'Hype — High start, faster pump',  weights: up,   initial: 50_000,  migration: 5_000_000, partnerLp: 0,  creatorLp: 100, migrationFeeOpt: MigrationFeeOption.FixedBps200 },
+    { key: 'slow-ramp', label: 'Slow Ramp — low start, slow grow', weights: down, initial: 1_000,   migration: 1_000_000, partnerLp: 10, creatorLp: 90 },
+    { key: 'builder',   label: 'Builder — mild exponential',      weights: mild, initial: 2_500,   migration: 1_000_000, partnerLp: 10, creatorLp: 90 },
   ];
 
-  for (const preset of presets) {
-    console.log(`Processing preset: ${preset.label}`);
-    // Generate config keypair
-    const configKeypair = Keypair.generate();
-    const configPubkey = configKeypair.publicKey;
-    console.log('configPubkey', configPubkey.toBase58());
+  // Collect transaction metadata
+  type TxMeta = { instructions: TransactionInstruction[]; signers: Keypair[]; pubkey: string; label: string; description: string; };
+  const metas: TxMeta[] = [];
 
-    // Build createConfig transaction instructions
-    const txV0 = await dbcClient.partner.createConfig({
-      payer: treasuryPubkey,
-      config: configPubkey,
-      feeClaimer: treasuryPubkey,
-      leftoverReceiver: treasuryPubkey,
-      quoteMint: NATIVE_MINT,
-      ...preset.config
+  for (const p of presets) {
+    console.log(`Building preset: ${p.key}`);
+    const cfg = await buildCurveWithLiquidityWeights({
+      ...shared,
+      initialMarketCap: p.initial,
+      migrationMarketCap: p.migration,
+      partnerLpPercentage: p.partnerLp,
+      creatorLpPercentage: p.creatorLp,
+      ...(p.migrationFeeOpt !== undefined ? { migrationFeeOption: p.migrationFeeOpt } : {}),
+      liquidityWeights: p.weights(),
     });
 
-    // Store meta for later batching
-    metas.push({
-      instructions: txV0.instructions,
-      signers: [TREASURY_KP, configKeypair],
-      pubkey: configPubkey.toBase58(),
-      label: preset.label,
-      description: preset.description,
-      config: preset.config,
-    });
+    const keypair = Keypair.generate();
+    const addr = keypair.publicKey;
+    console.log('Config:', p.key, addr.toBase58());
 
-    poolKeys.push(configPubkey.toBase58());
+    const tx = await dbc.partner.createConfig({ payer: treasury, config: addr, feeClaimer: treasury, leftoverReceiver: treasury, quoteMint: NATIVE_MINT, ...cfg });
+
+    metas.push({ instructions: tx.instructions, signers: [TREASURY_KP, keypair], pubkey: addr.toBase58(), label: p.label, description: p.description });
   }
-  
-  console.log('pool keys');
-  console.log(poolKeys.join('\n===========================================\n'));
 
-  const totalInstr = metas.reduce((sum, m) => sum + m.instructions.length, 0);
-
+  console.log('Prepared', metas.length, 'configs');
   if (DRY_RUN) {
-    console.log('\nBonding Curve Preview (DRY_RUN)\n');
-    // Display each preset's curve points as human-readable prices and liquidity
-    const table = presets.map(p => {
-      const [start, end] = p.config.curve;
-      const startPrice = getPriceFromSqrtPrice(start.sqrtPrice, decimals, decimals).toFixed(decimals);
-      const endPrice = getPriceFromSqrtPrice(end.sqrtPrice, decimals, decimals).toFixed(decimals);
-      return {
-        Label: p.label,
-        'Start Price (SOL)': startPrice,
-        'Start Liquidity': start.liquidity.toString(),
-        'End Price (SOL)': endPrice,
-        'End Liquidity': end.liquidity.toString(),
-      };
-    });
-    console.table(table);
-    console.log('\u26A0\uFE0F  DRY_RUN mode enabled – skipping on-chain transaction submission and Redis writes.');
-    console.log(`Built ${totalInstr} instructions across ${metas.length} configs – validation successful.`);
+    console.log('DRY_RUN: no on-chain submission or Redis writes');
     return;
   }
 
-  // Send each config in its own transaction
-  for (const [idx, meta] of metas.entries()) {
+  // Send transactions and store in Redis
+  for (let i = 0; i < metas.length; i++) {
+    const m = metas[i];
     const { blockhash } = await connection.getLatestBlockhash('finalized');
-
-    const message = new TransactionMessage({
-      payerKey: treasuryPubkey,
-      recentBlockhash: blockhash,
-      instructions: meta.instructions,
-    }).compileToV0Message();
-
-    const tx = new VersionedTransaction(message);
-    tx.sign(meta.signers);
-
-    const sig = await connection.sendTransaction(tx);
+    const message = new TransactionMessage({ payerKey: treasury, recentBlockhash: blockhash, instructions: m.instructions }).compileToV0Message();
+    const txv = new VersionedTransaction(message);
+    txv.sign(m.signers);
+    const sig = await connection.sendTransaction(txv);
     await connection.confirmTransaction(sig, 'finalized');
-    console.log(`Tx ${idx + 1}/${metas.length} sent – signature: ${sig}`);
+    console.log(`Sent [${i + 1}/${metas.length}] sig=`, sig);
 
     // Redis persistence
-    const configKeypair = meta.signers.find(s => s.publicKey.toBase58() === meta.pubkey && s !== TREASURY_KP) as Keypair;
-    const signerKey = `dbc:signer:${treasuryPubkey.toBase58()}:${meta.pubkey}`;
-    await redis.set(signerKey, Buffer.from(configKeypair.secretKey).toString('base64'));
-    await redis.zadd('dbc:config:keys', { score: Date.now(), member: meta.pubkey });
-    const poolKey = `dbc:config:${meta.pubkey}`;
-    await redis.hset(poolKey, {
-      label: meta.label,
-      description: meta.description,
-      config: JSON.stringify(meta.config),
-      pubkey: meta.pubkey,
-      txSig: sig,
-    });
+    const signerKey = `dbc:signer:${treasury.toBase58()}:${m.pubkey}`;
+    const kp = m.signers.find(s => s.publicKey.toBase58() === m.pubkey && s !== TREASURY_KP)!;
+    await redis.set(signerKey, Buffer.from(kp.secretKey).toString('base64'));
+    await redis.zadd('dbc:config:keys', { score: Date.now(), member: m.pubkey });
+    await redis.hset(`dbc:config:${m.pubkey}`, { label: m.label, description: m.description, pubkey: m.pubkey, txSig: sig });
   }
-
-  // Trim sorted set to latest 500
-  await redis.zremrangebyrank('dbc:config:keys', 0, -10);
-
-  console.log('All presets processed and transactions confirmed');
+  console.log('All done');
 }
 
-main().catch(err => {
-  console.error('Error processing presets', err);
-  process.exit(1);
-});
+main().catch(e => { console.error(e); process.exit(1); });
