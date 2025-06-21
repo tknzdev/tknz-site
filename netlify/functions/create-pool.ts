@@ -5,7 +5,6 @@ import {
   PublicKey,
   VersionedTransaction,
   TransactionMessage,
-  LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
 import BN from 'bn.js';
 
@@ -44,7 +43,7 @@ interface RequestBody {
   walletAddress: string; // poolCreator
   configKey: string; // existing config public key
   token: TokenDetails;
-  /** Optional initial buy amount in SOL */
+  /** Optional initial buy amount in tokens */
   buyAmount?: number;
 }
 
@@ -126,10 +125,9 @@ export const handler: Handler = async (event) => {
     // Generate base mint keypair that will back the pool
     const baseMintKeypair = Keypair.generate();
 
-    // Determine buy lamports (optional initial buy)
-    const buyLamports = Math.floor(buyAmount * LAMPORTS_PER_SOL);
+    // Determine if initial token buy (optional)
     let transaction;
-    if (buyLamports > 0) {
+    if (buyAmount > 0) {
       // Create pool and immediately swap buyAmount
       // Note: minimumAmountOut set to zero to avoid swap failures due to slippage constraints
       transaction = await dbcClient.pool.createPoolWithFirstBuy({
@@ -144,7 +142,7 @@ export const handler: Handler = async (event) => {
           poolCreator: userPubkey,
         },
         // Buy parameters at top level
-        buyAmount: new BN(Math.floor(0.0005 * LAMPORTS_PER_SOL)),
+        buyAmount: new BN(buyAmount),
         minimumAmountOut: new BN(0), // no slippage enforcement
         referralTokenAccount: null,
       });
@@ -198,9 +196,8 @@ export const handler: Handler = async (event) => {
         feeSol: 0.0001, // todo derive the fee from the config
         feeLamports: 100000, // todo derive the fee from the config
         metadataUri: uri,
-        // Echo buy amounts
+        // Echo buy amount in tokens
         buySol: buyAmount,
-        buyLamports,
       }),
     };
   } catch (error: any) {
