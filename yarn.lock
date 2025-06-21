@@ -1569,10 +1569,10 @@
     dotenv "^16.0.1"
     invariant "^2.2.4"
 
-"@meteora-ag/dynamic-bonding-curve-sdk@^1.2.3-rc.1":
-  version "1.2.3-rc.1"
-  resolved "https://registry.yarnpkg.com/@meteora-ag/dynamic-bonding-curve-sdk/-/dynamic-bonding-curve-sdk-1.2.3-rc.1.tgz#a5ec9422262f1e8fd4e70e3c97a8ec9f7cd791c3"
-  integrity sha512-xE82oiJrX/4ir7a3GReXzVJL6/EfGkSr50IQEz+JpJaYtomdBQJWc+5Shcx10/Qty8LGVZ7kR8emUwaTSb4qeQ==
+"@meteora-ag/dynamic-bonding-curve-sdk@^1.2.4":
+  version "1.2.7"
+  resolved "https://registry.yarnpkg.com/@meteora-ag/dynamic-bonding-curve-sdk/-/dynamic-bonding-curve-sdk-1.2.7.tgz#82069ef1351366da370c73636a05e5cd088f9595"
+  integrity sha512-IAqZCQ7bGJeXyvXe+ouBksXG0dvZhO6rgBbL74jvewRpcsux0vmo8IvZ/LosTLxDThvPRt0bwfZLJeiDbm8/Yw==
   dependencies:
     "@coral-xyz/anchor" "^0.31.0"
     "@solana/spl-token" "^0.4.13"
