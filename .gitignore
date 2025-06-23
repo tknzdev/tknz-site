@@ -2,3 +2,4 @@ dist/
 .netlify/
 .env
 node_modules/
+logs/
