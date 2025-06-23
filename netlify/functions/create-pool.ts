@@ -7,7 +7,7 @@ import {
   TransactionMessage,
 } from '@solana/web3.js';
 import BN from 'bn.js';
-
+import { Redis } from '@upstash/redis';
 import { NATIVE_MINT, TOKEN_PROGRAM_ID,getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk';
 import { createTokenMetadata } from '../../src/utils/createTokenMetadata';
@@ -26,6 +26,11 @@ if (process.env.TREASURY_SECRET_KEY) {
 } else {
   throw new Error('TREASURY_SECRET_KEY is not set');
 }
+
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
 
 const RPC_ENDPOINT = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 
@@ -124,6 +129,14 @@ export const handler: Handler = async (event) => {
 
     // Generate base mint keypair that will back the pool
     const baseMintKeypair = Keypair.generate();
+    const mintPubkey = baseMintKeypair.publicKey;
+    const mintRedisKey = `signer:${walletAddress}:${mintPubkey.toBase58()}:mint`;
+    // Persist mint keypair private key (base64) for later signing via sign-token-txs
+    await redis.set(
+      mintRedisKey,
+      Buffer.from(baseMintKeypair.secretKey).toString('base64')
+    );
+
 
     // Determine if initial token buy (optional)
     let transaction;
