@@ -164,15 +164,25 @@ const Header: React.FC = () => {
           </div>
         </div>
 
-        <a 
-          href="https://chromewebstore.google.com/detail/tknz/eejballiemiamlndhkblapmlmjdgaaoi?utm_source=item-share-cb"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="hidden md:block bg-green-500 hover:bg-green-400 text-black px-6 py-2 rounded-md font-semibold transition-all hover:scale-105 hover:shadow-lg hover:shadow-green-500/30 relative group"
-        >
-          <span className="relative z-10">Download TKNZ</span>
-          <div className="absolute inset-0 bg-green-400 rounded-md blur-lg opacity-0 group-hover:opacity-50 transition-opacity"></div>
-        </a>
+        <div className="hidden md:flex items-center space-x-4">
+          <a
+            href="https://launch.tknz.fun"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-black hover:bg-gray-800 text-green-500 px-6 py-2 rounded-md font-semibold transition-all hover:scale-105 hover:shadow-lg hover:shadow-green-500/30"
+          >
+            Launchpad
+          </a>
+          <a
+            href="https://chromewebstore.google.com/detail/tknz/eejballiemiamlndhkblapmlmjdgaaoi?utm_source=item-share-cb"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-green-500 hover:bg-green-400 text-black px-6 py-2 rounded-md font-semibold transition-all hover:scale-105 hover:shadow-lg hover:shadow-green-500/30 relative group"
+          >
+            <span className="relative z-10">Download TKNZ</span>
+            <div className="absolute inset-0 bg-green-400 rounded-md blur-lg opacity-0 group-hover:opacity-50 transition-opacity"></div>
+          </a>
+        </div>
 
         {/* Mobile Menu Button */}
         <button
@@ -267,6 +277,15 @@ const Header: React.FC = () => {
               </div>
             </div>
 
+            <a
+              href="https://launch.tknz.fun"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-black hover:bg-gray-800 text-green-500 px-6 py-3 rounded-md font-semibold transition-all text-xl text-center"
+              onClick={() => setIsMenuOpen(false)}
+            >
+              Launchpad
+            </a>
             <a 
               href="https://chromewebstore.google.com/detail/tknz/eejballiemiamlndhkblapmlmjdgaaoi?utm_source=item-share-cb"
               target="_blank"
