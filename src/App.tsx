@@ -7,6 +7,7 @@ import VisionSection from './components/VisionSection';
 import BuildingWithSection from './components/BuildingWithSection';
 import RoadmapSection from './components/RoadmapSection';
 import Footer from './components/Footer';
+import LaunchpadCTA from './components/LaunchpadCTA';
 
 function App() {
   useEffect(() => {
@@ -28,6 +29,7 @@ function App() {
       <Header />
       <main>
         <HeroSection />
+        <LaunchpadCTA />
         <AboutSection />
         <VisionSection />
         <RoadmapSection />
