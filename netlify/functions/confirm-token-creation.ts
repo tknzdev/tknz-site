@@ -101,6 +101,7 @@ export const handler: Handler = async (event) => {
     pipeline.hset(hashKey, flat);
     // Sorted set for launch time ordering
     pipeline.zadd('leaderboard:v2', { score: timestamp, member: mint });
+    pipeline.zadd("leaderboard:launchTime", { score: timestamp, member: mint });
     // Persist poolConfigKey for later Explore filtering (keep top 500)
     if (payload.poolConfigKey) {
       pipeline.hset(hashKey, { poolConfigKey: String(payload.poolConfigKey) });
