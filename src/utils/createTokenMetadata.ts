@@ -9,39 +9,85 @@ export async function createTokenMetadata(token: {
   twitter?: string;
   telegram?: string;
 }): Promise<{ name: string; symbol: string; uri: string; imageUrl: string }> {
-// Helper to upload token metadata (name, symbol, description, image, etc.) to IPFS via Pump Portal
-  const { name, ticker, description, imageUrl, websiteUrl, twitter, telegram } = token;
-  if (!imageUrl) {
-    throw new Error('No image provided for token creation');
-  }
-  const formData = new FormData();
-  let fileBlob: Blob;
+  const { name, ticker: symbol, description, imageUrl, websiteUrl, twitter, telegram } = token;
+  if (!imageUrl) throw new Error('createTokenMetadata: missing imageUrl');
+
+  // 1. Prepare image blob
+  let blob: Blob;
   if (imageUrl.startsWith('data:')) {
     const [meta, base64] = imageUrl.split(',');
-    const contentType = meta.split(':')[1].split(';')[0];
+    const mime = meta.split(':')[1].split(';')[0];
     const buf = Buffer.from(base64, 'base64');
-    fileBlob = new Blob([buf], { type: contentType });
+    blob = new Blob([buf], { type: mime });
   } else {
     const res = await fetch(imageUrl);
-    fileBlob = await res.blob();
+    if (!res.ok) throw new Error(`createTokenMetadata: failed to fetch image (${res.status}): ${res.statusText}`);
+    blob = await res.blob();
   }
-  formData.append('file', fileBlob);
-  formData.append('name', name);
-  formData.append('symbol', ticker);
-  formData.append('description', description);
-  if (websiteUrl) formData.append('website', websiteUrl);
-  if (twitter) formData.append('twitter', twitter);
-  if (telegram) formData.append('telegram', telegram);
-  formData.append('showName', 'true');
-  const resp = await fetch('https://pump.fun/api/ipfs', { method: 'POST', body: formData });
-  if (!resp.ok) {
-    throw new Error(`Failed to upload metadata: ${resp.statusText}`);
+
+  // Ensure JWT is provided for Pinata authentication
+  const jwt = process.env.PINATA_JWT_KEY;
+  if (!jwt) {
+    throw new Error('PINATA_JWT_KEY environment variable is required');
   }
-  const json = await resp.json();
-  return {
-    name: json.metadata.name,
-    symbol: json.metadata.symbol,
-    uri: json.metadataUri,
-    imageUrl: json.metadata.image,
+  const authHeaders = { Authorization: `Bearer ${jwt}` };
+  // 2. Upload image to Pinata
+  const imgForm = new FormData();
+  imgForm.append('file', blob);
+  // following Pinata Quickstart: include options and metadata
+  imgForm.append('pinataOptions', JSON.stringify({ cidVersion: 1 }));
+  imgForm.append('pinataMetadata', JSON.stringify({ name }));
+  const pinFileRes = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
+    method: 'POST',
+    headers: authHeaders,
+    body: imgForm,
+  });
+  if (!pinFileRes.ok) {
+    const txt = await pinFileRes.text();
+    throw new Error(`createTokenMetadata: pinFileToIPFS failed: ${txt}`);
+  }
+  const { IpfsHash: imageHash } = await pinFileRes.json();
+  const imageIpfs = `ipfs://${imageHash}`;
+  // Prepare gateway URL (no trailing slash)
+  const gatewayUrl = process.env.PINATA_GATEWAY_URL?.replace(/\/+$/, '') || '';
+  const imageForMetadata = gatewayUrl
+    ? `${gatewayUrl}/ipfs/${imageHash}`
+    : imageIpfs;
+
+  // 3. Build metadata JSON
+  const metadata: Record<string, any> = {
+    name,
+    symbol,
+    description,
+    image: imageForMetadata,
   };
+  if (websiteUrl) metadata.external_url = websiteUrl;
+  metadata.attributes = [];
+  const exts: Record<string,string> = {};
+  if (twitter) exts.twitter = twitter;
+  if (telegram) exts.telegram = telegram;
+  if (Object.keys(exts).length) metadata.extensions = exts;
+
+  // 4. Pin JSON to Pinata
+  const pinJsonRes = await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders,
+    },
+    body: JSON.stringify({
+      pinataOptions: { cidVersion: 1 },
+      pinataMetadata: { name: `${name}-metadata` },
+      pinataContent: metadata,
+    }),
+  });
+  if (!pinJsonRes.ok) {
+    const txt = await pinJsonRes.text();
+    throw new Error(`createTokenMetadata: pinJSONToIPFS failed: ${txt}`);
+  }
+  const { IpfsHash: metaHash } = await pinJsonRes.json();
+  const uriResult = gatewayUrl
+    ? `${gatewayUrl}/ipfs/${metaHash}`
+    : `ipfs://${metaHash}`;
+  return { name, symbol, uri: uriResult, imageUrl: imageForMetadata };
 }
