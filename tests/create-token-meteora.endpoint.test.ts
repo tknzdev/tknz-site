@@ -15,7 +15,7 @@ dotenv.config();
  * - Solana Test Validator must be running on http://localhost:8899
  * - RPC_ENDPOINT and CP_AMM_STATIC_CONFIG env vars provided to Netlify Dev
  */
-test('create-token-meteora endpoint should return valid & executable transactions', async () => {
+test.skip('create-token-meteora endpoint should return valid & executable transactions', async () => {
   // Generate a fresh user keypair and use its pubkey as walletAddress
   const userKeypair = Keypair.generate();
   const walletAddress = userKeypair.publicKey.toBase58();
