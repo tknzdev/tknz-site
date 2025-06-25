@@ -1,6 +1,7 @@
-import { Handler } from '@netlify/functions';
+import type { Handler } from '@netlify/functions';
 import { PublicKey, SystemProgram, LAMPORTS_PER_SOL, Transaction, VersionedTransaction, TransactionMessage } from '@solana/web3.js';
-import { Buffer, Blob } from 'buffer';
+import { createTokenMetadata } from '../../src/utils/createTokenMetadata';
+import { Buffer } from 'buffer';
 
 // Endpoint to build and return a Solana transaction for token creation with a fee instruction
 
@@ -18,6 +19,7 @@ interface TokenMetadata {
   name: string;
   symbol: string;
   uri: string;
+  imageUrl?: string;
 }
 
 interface PortalParams {
@@ -64,60 +66,8 @@ const defaultPumpPortalParams = {
     pool: "pump"
 }
 
-async function createTokenMetadata(token: Token): Promise<TokenMetadata> {
-    const { name, ticker, description, imageUrl, websiteUrl, twitter, telegram } = token;
-
-    if (!imageUrl) {
-        throw new Error('No image provided for coin creation');
-    }
-
-    const formData = new FormData();
-
-    let fileBlob: Blob;
-    
-    if (imageUrl.startsWith('data:')) {
-      // Handle base64 data URL
-      const [meta, base64Data] = imageUrl.split(',');
-      const contentType = meta.split(':')[1].split(';')[0];
-      const buffer = Buffer.from(base64Data, 'base64');
-      fileBlob = new Blob([buffer], { type: contentType });
-    } else {
-      const imgRes = await fetch(imageUrl);
-      fileBlob = await imgRes.blob();
-    }
-
-    formData.append("file", fileBlob);
-    formData.append("name", name);
-    formData.append("symbol", ticker);
-    formData.append("description", description);
-    if (websiteUrl) {
-        formData.append("website", websiteUrl);
-    }
-    if (twitter) {
-        formData.append("twitter", twitter);
-    }
-    if (telegram) {
-        formData.append("telegram", telegram);
-    }
-    formData.append("showName", "true");
-
-    const metadataResponse = await fetch("https://pump.fun/api/ipfs", {
-      method: "POST",
-      body: formData,
-    });
-    
-    if (!metadataResponse.ok) {
-      throw new Error(`Failed to upload metadata: ${metadataResponse.statusText}`);
-    }
-    
-    const metadataResponseJSON = await metadataResponse.json();
-
-    return {
-        name: metadataResponseJSON.metadata.name,
-        symbol: metadataResponseJSON.metadata.symbol,
-        uri: metadataResponseJSON.metadataUri
-    }
-}
+// Reuse shared metadata uploader
+// createTokenMetadata(token) imported from src/utils/createTokenMetadata
 
 
 export const handler: Handler = async (event) => {
